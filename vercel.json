@@ -1,15 +1,21 @@
 {
-  "version": 2,
-  "buildCommand": "cd kosh-frontend && npm install && npm run build",
-  "outputDirectory": "kosh-frontend/dist",
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "kosh_frontend": {
+      "root": "kosh-frontend/"
+    },
+    "kosh_backend": {
+      "root": "kosh-backend/"
+    }
+  },
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "/api/index.js"
+      "destination": { "service": "kosh_backend" }
     },
     {
       "source": "/(.*)",
-      "destination": "/index.html"
+      "destination": { "service": "kosh_frontend" }
     }
   ]
 }
