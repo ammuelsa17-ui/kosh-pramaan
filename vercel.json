@@ -1,21 +1,23 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "services": {
-    "kosh_frontend": {
-      "root": "kosh-frontend/"
+    "kosh-backend": {
+      "root": "kosh-backend",
+      "framework": "express"
     },
-    "kosh_backend": {
-      "root": "kosh-backend/"
+    "kosh-frontend": {
+      "root": "kosh-frontend",
+      "framework": "vite"
     }
   },
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": { "service": "kosh_backend" }
+      "destination": { "service": "kosh-backend" }
     },
     {
       "source": "/(.*)",
-      "destination": { "service": "kosh_frontend" }
+      "destination": { "service": "kosh-frontend" }
     }
   ]
 }
