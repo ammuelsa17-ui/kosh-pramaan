@@ -1,0 +1,14 @@
+{
+  "name": "kosh-pramaan",
+  "version": "1.0.0",
+  "description": "KOSH-PRAMAAN SIH26265 - Unified Fullstack Deployment",
+  "type": "module",
+  "scripts": {
+    "build": "cd kosh-frontend && npm install && npm run build",
+    "test": "cd kosh-backend && npm test && cd ../kosh-frontend && npm test"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "pg": "^8.13.3"
+  }
+}
