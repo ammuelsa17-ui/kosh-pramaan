@@ -6,30 +6,46 @@ import casesRouter from './src/routes/cases.routes.js';
 const app = express();
 const PORT = process.env.PORT || 5001;
 
-// Built-in body parsing
-app.use(express.json());
+// Built-in body parsing with support for document upload payloads
+app.use(express.json({ limit: '10mb' }));
 
-// CORS configuration for local Vite development origin and Vercel deployments
+// Strict CORS configuration: Explicit trusted origin allowlist (No origin reflection)
+const TRUSTED_ORIGINS = new Set([
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:3000',
+  'https://kosh-pramaan.vercel.app'
+]);
+
+if (process.env.FRONTEND_URL) {
+  TRUSTED_ORIGINS.add(process.env.FRONTEND_URL.replace(/\/$/, ''));
+}
+
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  const isAllowed = !origin || 
-    origin === 'http://localhost:5173' || 
-    origin === 'http://localhost:3000' ||
-    origin.endsWith('.vercel.app') ||
-    origin.includes('localhost') ||
-    (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL);
 
-  if (isAllowed) {
-    res.header('Access-Control-Allow-Origin', origin || '*');
-  } else {
+  // Verify against strict allowlist or authorized Vercel preview domain pattern
+  const isAllowedOrigin = origin && (
+    TRUSTED_ORIGINS.has(origin) ||
+    /^https:\/\/kosh-pramaan(-git-[a-z0-9-]+)?(-[a-z0-9]+)?\.vercel\.app$/.test(origin)
+  );
+
+  if (isAllowedOrigin) {
     res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Vary', 'Origin');
   }
+  // When origin is NOT in allowlist, Access-Control-Allow-Origin is strictly withheld
+
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  res.header('Access-Control-Allow-Credentials', 'true');
 
   if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
+    if (!origin || isAllowedOrigin) {
+      return res.sendStatus(204);
+    }
+    return res.status(403).json({ error: 'CORS Preflight Forbidden: Origin not permitted' });
   }
   next();
 });

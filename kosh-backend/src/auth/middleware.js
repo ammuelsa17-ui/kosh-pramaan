@@ -22,16 +22,6 @@ export function authenticate(req, res, next) {
         institution_id: demoUser.institution_id || null
       });
     }
-  } else if (process.env.NODE_ENV === 'test' && !req.headers['x-strict-auth']) {
-    // Legacy test harness backward compatibility:
-    // If running in test runner without auth headers and without x-strict-auth, default to AICTE_OFFICER
-    req.user = {
-      id: 'USR-TEST-LEGACY',
-      name: 'Automated Test Officer',
-      role: ROLES.AICTE_OFFICER,
-      department: 'AICTE Sanctioning Authority'
-    };
-    return next();
   }
 
   if (!token) {

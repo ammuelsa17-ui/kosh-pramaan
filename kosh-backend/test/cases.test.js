@@ -4,6 +4,7 @@ import http from 'node:http';
 import { Socket } from 'node:net';
 import { app } from '../server.js';
 import { pool } from '../src/config/db.js';
+import { signToken } from '../src/auth/jwt.js';
 
 test('GET /api/cases returns case list when DB is populated', async () => {
   // Save original pool.query
@@ -48,7 +49,13 @@ test('GET /api/cases returns case list when DB is populated', async () => {
     const req = new http.IncomingMessage(socket);
     req.url = '/api/cases';
     req.method = 'GET';
-    req.headers = { host: 'localhost:5001' };
+    const token = signToken({
+      sub: 'officer-test',
+      name: 'Test Officer',
+      role: 'AICTE_OFFICER',
+      department: 'Approvals'
+    });
+    req.headers = { host: 'localhost:5001', authorization: `Bearer ${token}` };
 
     const res = new http.ServerResponse(req);
     let body = '';

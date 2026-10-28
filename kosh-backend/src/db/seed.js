@@ -3,6 +3,7 @@ import { query } from '../config/db.js';
 export const SEED_CASES = [
   {
     id: 'FDR-2026-001',
+    institution_id: 'AICTE-1-492019482',
     institution_name: 'Apex Infrastructure Projects Ltd',
     depositor_name: 'Apex Infrastructure Guarantee Account',
     fdr_number: 'FDR/SBI/2026/894102',

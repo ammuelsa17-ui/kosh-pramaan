@@ -1,9 +1,13 @@
 import { query } from '../config/db.js';
 
 export const SCHEMA_SQL = `
--- 1. FDR Cases (Institution-submitted details)
+-- Concurrency-Safe Sequence for Atomic, Non-Colliding FDR Case IDs
+CREATE SEQUENCE IF NOT EXISTS fdr_case_seq START WITH 100 INCREMENT BY 1;
+
+-- 1. FDR Cases (Institution-submitted details with regulatory release attributes)
 CREATE TABLE IF NOT EXISTS fdr_cases (
   id VARCHAR(32) PRIMARY KEY,
+  institution_id VARCHAR(64) NOT NULL DEFAULT 'AICTE-1-492019482',
   institution_name VARCHAR(255) NOT NULL,
   depositor_name VARCHAR(255) NOT NULL,
   fdr_number VARCHAR(64) NOT NULL UNIQUE,
@@ -17,9 +21,16 @@ CREATE TABLE IF NOT EXISTS fdr_cases (
   status VARCHAR(32) NOT NULL CHECK (status IN ('SUBMITTED', 'UNDER_REVIEW', 'VERIFICATION_PENDING', 'MISMATCH_FLAGGED', 'CLEARANCE_BLOCKED', 'APPROVED', 'REJECTED')),
   department_queue VARCHAR(64) NOT NULL,
   document_filename VARCHAR(255),
+  release_doc_type VARCHAR(64) DEFAULT 'FDR_RELEASE_NOC' CHECK (release_doc_type IN ('FDR_RELEASE_NOC', 'RTGS_SANCTION_ORDER')),
+  sanction_order_number VARCHAR(128),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Backward compatibility columns for existing tables
+ALTER TABLE fdr_cases ADD COLUMN IF NOT EXISTS institution_id VARCHAR(64) DEFAULT 'AICTE-1-492019482';
+ALTER TABLE fdr_cases ADD COLUMN IF NOT EXISTS release_doc_type VARCHAR(64) DEFAULT 'FDR_RELEASE_NOC';
+ALTER TABLE fdr_cases ADD COLUMN IF NOT EXISTS sanction_order_number VARCHAR(128);
 
 -- 2. Simulated Bank Records (Strictly separate from submitted data, clearly marked as simulated)
 CREATE TABLE IF NOT EXISTS simulated_bank_records (
@@ -40,7 +51,7 @@ CREATE TABLE IF NOT EXISTS simulated_bank_records (
   CONSTRAINT uq_simulated_case UNIQUE (case_id)
 );
 
--- 3. Clearance Tasks (Workflow queues, mandatory status, and blockers)
+-- 3. Clearance Tasks (AICTE APH §6.46: PGRC, Vigilance, Grants, and Accounts queues)
 CREATE TABLE IF NOT EXISTS clearance_tasks (
   id VARCHAR(32) PRIMARY KEY,
   case_id VARCHAR(32) NOT NULL REFERENCES fdr_cases(id) ON DELETE CASCADE,
@@ -68,7 +79,22 @@ CREATE TABLE IF NOT EXISTS objections (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 5. Audit Events (Traceable chronological activity log)
+-- 5. Case Documents (Real evidentiary artifact storage with SHA-256 integrity hashes)
+CREATE TABLE IF NOT EXISTS case_documents (
+  id VARCHAR(64) PRIMARY KEY,
+  case_id VARCHAR(32) NOT NULL REFERENCES fdr_cases(id) ON DELETE CASCADE,
+  document_type VARCHAR(64) NOT NULL,
+  document_name VARCHAR(255) NOT NULL,
+  mime_type VARCHAR(64) NOT NULL DEFAULT 'application/pdf',
+  file_size_bytes INT NOT NULL,
+  sha256_hash VARCHAR(64) NOT NULL,
+  document_data TEXT,
+  uploaded_by VARCHAR(128) NOT NULL,
+  uploaded_by_role VARCHAR(64) NOT NULL,
+  uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 6. Audit Events (Immutable chronological activity ledger)
 CREATE TABLE IF NOT EXISTS audit_events (
   id SERIAL PRIMARY KEY,
   case_id VARCHAR(32) NOT NULL REFERENCES fdr_cases(id) ON DELETE CASCADE,
@@ -82,20 +108,22 @@ CREATE TABLE IF NOT EXISTS audit_events (
   metadata JSONB
 );
 
--- Indexes for efficient queries
+-- Indexes for high-performance parameterized queries
 CREATE INDEX IF NOT EXISTS idx_fdr_cases_status ON fdr_cases(status);
+CREATE INDEX IF NOT EXISTS idx_fdr_cases_inst ON fdr_cases(institution_id);
 CREATE INDEX IF NOT EXISTS idx_clearance_tasks_case ON clearance_tasks(case_id);
 CREATE INDEX IF NOT EXISTS idx_objections_case ON objections(case_id);
+CREATE INDEX IF NOT EXISTS idx_case_documents_case ON case_documents(case_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_case ON audit_events(case_id);
 `;
 
 /**
- * Idempotently initialize the PostgreSQL tables.
+ * Idempotently initialize the PostgreSQL tables, sequences, and indexes.
  * Safe to execute multiple times without error or data loss.
  */
 export async function initializeSchema() {
-  console.log('[KOSH-PRAMAAN] Initializing PostgreSQL database schema...');
+  console.log('[KOSH-PRAMAAN] Initializing PostgreSQL database schema (APH §6.46 compliant)...');
   await query(SCHEMA_SQL);
   console.log('[KOSH-PRAMAAN] Database schema initialized successfully.');
-  return { success: true, message: 'Schema tables ready' };
+  return { success: true, message: 'Schema tables and sequences ready' };
 }

@@ -4,6 +4,15 @@ import http from 'node:http';
 import { Socket } from 'node:net';
 import { app } from '../server.js';
 import { SEED_CASES, resetInMemorySeed, seedDatabase } from '../src/db/seed.js';
+import { signToken } from '../src/auth/jwt.js';
+import { ROLES } from '../src/auth/roles.js';
+
+const defaultOfficerToken = signToken({
+  id: 'USR-APPROV-TEST',
+  name: 'Dr. K. L. Roy',
+  role: ROLES.AICTE_OFFICER,
+  department: 'AICTE Sanctioning Authority'
+});
 
 test.before(async () => {
   try {
@@ -27,8 +36,10 @@ function makeRequest({ method = 'GET', url = '/', body = null, headers = {} }) {
     req.method = method;
 
     const payloadStr = body ? JSON.stringify(body) : null;
+    const authHeader = headers.authorization !== undefined ? headers.authorization : `Bearer ${defaultOfficerToken}`;
     req.headers = {
       host: 'localhost:5001',
+      ...(authHeader ? { authorization: authHeader } : {}),
       ...(payloadStr ? {
         'content-type': 'application/json',
         'content-length': Buffer.byteLength(payloadStr)

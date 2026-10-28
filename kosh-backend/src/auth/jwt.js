@@ -1,6 +1,13 @@
 import crypto from 'node:crypto';
 
-const DEV_TEST_FALLBACK_SECRET = 'kosh-pramaan-sih26265-dev-test-secret-minimum-32chars!';
+// Ephemeral runtime secret for local development/testing when JWT_SECRET is unset
+let ephemeralDevSecret = null;
+function getDevSecret() {
+  if (!ephemeralDevSecret) {
+    ephemeralDevSecret = crypto.randomBytes(32).toString('hex');
+  }
+  return ephemeralDevSecret;
+}
 
 /**
  * Validates and retrieves the JWT secret.
@@ -11,7 +18,7 @@ export function getJwtSecret() {
   const isProd = process.env.NODE_ENV === 'production';
 
   if (isProd) {
-    if (!secret || secret.trim() === '' || secret === DEV_TEST_FALLBACK_SECRET) {
+    if (!secret || secret.trim() === '') {
       throw new Error(
         '[SECURITY VIOLATION] JWT_SECRET must be configured via environment variables in production mode. Fallback secret is strictly prohibited.'
       );
@@ -30,7 +37,7 @@ export function getJwtSecret() {
     return secret;
   }
 
-  return secret || DEV_TEST_FALLBACK_SECRET;
+  return secret || getDevSecret();
 }
 
 function base64UrlEncode(str) {

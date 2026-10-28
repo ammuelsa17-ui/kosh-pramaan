@@ -6,6 +6,15 @@ import { pool, query, checkDbConnection } from '../src/config/db.js';
 import { initializeSchema } from '../src/db/schema.js';
 import { seedDatabase, resetInMemorySeed } from '../src/db/seed.js';
 import { app } from '../server.js';
+import { signToken } from '../src/auth/jwt.js';
+import { ROLES } from '../src/auth/roles.js';
+
+const defaultOfficerToken = signToken({
+  id: 'USR-APPROV-TEST',
+  name: 'Dr. K. L. Roy',
+  role: ROLES.AICTE_OFFICER,
+  department: 'AICTE Sanctioning Authority'
+});
 
 // Helper to make simulated HTTP requests directly into Express
 function makeRequest({ method = 'GET', url = '/', body = null, headers = {} }) {
@@ -16,8 +25,10 @@ function makeRequest({ method = 'GET', url = '/', body = null, headers = {} }) {
     req.method = method;
 
     const payloadStr = body ? JSON.stringify(body) : null;
+    const authHeader = headers.authorization !== undefined ? headers.authorization : `Bearer ${defaultOfficerToken}`;
     req.headers = {
       host: 'localhost:5001',
+      ...(authHeader ? { authorization: authHeader } : {}),
       ...(payloadStr ? {
         'content-type': 'application/json',
         'content-length': Buffer.byteLength(payloadStr)
