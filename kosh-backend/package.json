@@ -1,0 +1,16 @@
+{
+  "name": "kosh-backend",
+  "version": "1.0.0",
+  "description": "KOSH-PRAMAAN Backend Modular Monolith for SIH26265",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "NODE_ENV=test PGDATABASE=kosh_pramaan_test node --test --test-concurrency=1 test/*.test.js",
+    "db:init": "node src/db/initDb.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "pg": "^8.13.3"
+  }
+}
