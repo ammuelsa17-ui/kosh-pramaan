@@ -552,6 +552,12 @@ export default function CaseDetailModal({ caseItem: initialCase, onClose, onCase
                 if mandatory clearance tasks are incomplete, verification is missing, or blocking objections remain active.
               </p>
 
+              {/* Simulation Workflow Notice */}
+              <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '6px', fontSize: '0.825rem', color: '#166534' }}>
+                <CheckCircle2 size={16} style={{ display: 'inline', verticalAlign: 'text-bottom', marginRight: '0.35rem' }} />
+                <strong>Simulated Demonstration Workflow:</strong> Core-banking verification is simulated (<code>SIMULATED — NOT LIVE BANK VERIFICATION</code>). Approval grants <strong>DEMO_APPROVED</strong> status. Official financial release requires independently authenticated live bank verification.
+              </div>
+
               {/* RBAC Notice */}
               {!canApprove && (
                 <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '6px', fontSize: '0.825rem', color: '#92400e' }}>

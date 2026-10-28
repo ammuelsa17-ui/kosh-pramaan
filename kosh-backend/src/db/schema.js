@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS fdr_cases (
   lien_marked_to VARCHAR(255) NOT NULL,
   deposit_date DATE NOT NULL,
   maturity_date DATE NOT NULL,
-  status VARCHAR(32) NOT NULL CHECK (status IN ('SUBMITTED', 'UNDER_REVIEW', 'VERIFICATION_PENDING', 'MISMATCH_FLAGGED', 'CLEARANCE_BLOCKED', 'APPROVED', 'REJECTED')),
+  status VARCHAR(32) NOT NULL CHECK (status IN ('SUBMITTED', 'UNDER_REVIEW', 'VERIFICATION_PENDING', 'MISMATCH_FLAGGED', 'CLEARANCE_BLOCKED', 'DEMO_APPROVED', 'APPROVED', 'RELEASE_REQUESTED', 'RELEASE_SANCTIONED', 'REFUNDED', 'REJECTED')),
   department_queue VARCHAR(64) NOT NULL,
   document_filename VARCHAR(255),
   release_doc_type VARCHAR(64) DEFAULT 'FDR_RELEASE_NOC' CHECK (release_doc_type IN ('FDR_RELEASE_NOC', 'RTGS_SANCTION_ORDER')),
@@ -27,10 +27,16 @@ CREATE TABLE IF NOT EXISTS fdr_cases (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Backward compatibility columns for existing tables
+-- Backward compatibility columns and constraints for existing tables
 ALTER TABLE fdr_cases ADD COLUMN IF NOT EXISTS institution_id VARCHAR(64) DEFAULT 'AICTE-1-492019482';
 ALTER TABLE fdr_cases ADD COLUMN IF NOT EXISTS release_doc_type VARCHAR(64) DEFAULT 'FDR_RELEASE_NOC';
 ALTER TABLE fdr_cases ADD COLUMN IF NOT EXISTS sanction_order_number VARCHAR(128);
+ALTER TABLE fdr_cases DROP CONSTRAINT IF EXISTS fdr_cases_status_check;
+ALTER TABLE fdr_cases ADD CONSTRAINT fdr_cases_status_check CHECK (status IN (
+  'SUBMITTED', 'UNDER_REVIEW', 'VERIFICATION_PENDING', 'MISMATCH_FLAGGED',
+  'CLEARANCE_BLOCKED', 'DEMO_APPROVED', 'APPROVED', 'RELEASE_REQUESTED',
+  'RELEASE_SANCTIONED', 'REFUNDED', 'REJECTED'
+));
 
 -- 2. Simulated Bank Records (Strictly separate from submitted data, clearly marked as simulated)
 CREATE TABLE IF NOT EXISTS simulated_bank_records (
@@ -79,12 +85,13 @@ CREATE TABLE IF NOT EXISTS objections (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 5. Case Documents (Real evidentiary artifact storage with SHA-256 integrity hashes)
+-- 5. Case Documents (Real evidentiary artifact storage with SHA-256 integrity hashes & versioning)
 CREATE TABLE IF NOT EXISTS case_documents (
   id VARCHAR(64) PRIMARY KEY,
   case_id VARCHAR(32) NOT NULL REFERENCES fdr_cases(id) ON DELETE CASCADE,
   document_type VARCHAR(64) NOT NULL,
   document_name VARCHAR(255) NOT NULL,
+  version INT NOT NULL DEFAULT 1,
   mime_type VARCHAR(64) NOT NULL DEFAULT 'application/pdf',
   file_size_bytes INT NOT NULL,
   sha256_hash VARCHAR(64) NOT NULL,
@@ -94,10 +101,12 @@ CREATE TABLE IF NOT EXISTS case_documents (
   uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 6. Audit Events (Immutable chronological activity ledger)
+ALTER TABLE case_documents ADD COLUMN IF NOT EXISTS version INT NOT NULL DEFAULT 1;
+
+-- 6. Audit Events (Immutable append-only chronological activity ledger with deletion protection)
 CREATE TABLE IF NOT EXISTS audit_events (
   id SERIAL PRIMARY KEY,
-  case_id VARCHAR(32) NOT NULL REFERENCES fdr_cases(id) ON DELETE CASCADE,
+  case_id VARCHAR(32) NOT NULL REFERENCES fdr_cases(id) ON DELETE RESTRICT,
   action VARCHAR(64) NOT NULL,
   actor VARCHAR(128) NOT NULL,
   actor_role VARCHAR(64) NOT NULL,
@@ -108,6 +117,26 @@ CREATE TABLE IF NOT EXISTS audit_events (
   metadata JSONB
 );
 
+-- Upgrade existing audit_events foreign key constraint to ON DELETE RESTRICT to guarantee audit retention
+ALTER TABLE audit_events DROP CONSTRAINT IF EXISTS audit_events_case_id_fkey;
+ALTER TABLE audit_events ADD CONSTRAINT audit_events_case_id_fkey FOREIGN KEY (case_id) REFERENCES fdr_cases(id) ON DELETE RESTRICT;
+
+-- 7. FDR Renewals / Replacements History
+CREATE TABLE IF NOT EXISTS fdr_renewals (
+  id VARCHAR(64) PRIMARY KEY,
+  case_id VARCHAR(32) NOT NULL REFERENCES fdr_cases(id) ON DELETE RESTRICT,
+  previous_fdr_number VARCHAR(64) NOT NULL,
+  new_fdr_number VARCHAR(64) NOT NULL,
+  previous_maturity_date DATE NOT NULL,
+  new_maturity_date DATE NOT NULL,
+  previous_amount NUMERIC(15, 2) NOT NULL,
+  new_amount NUMERIC(15, 2) NOT NULL,
+  renewal_notes TEXT,
+  renewed_by VARCHAR(128) NOT NULL,
+  renewed_by_role VARCHAR(64) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Indexes for high-performance parameterized queries
 CREATE INDEX IF NOT EXISTS idx_fdr_cases_status ON fdr_cases(status);
 CREATE INDEX IF NOT EXISTS idx_fdr_cases_inst ON fdr_cases(institution_id);
@@ -115,6 +144,7 @@ CREATE INDEX IF NOT EXISTS idx_clearance_tasks_case ON clearance_tasks(case_id);
 CREATE INDEX IF NOT EXISTS idx_objections_case ON objections(case_id);
 CREATE INDEX IF NOT EXISTS idx_case_documents_case ON case_documents(case_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_case ON audit_events(case_id);
+CREATE INDEX IF NOT EXISTS idx_fdr_renewals_case ON fdr_renewals(case_id);
 `;
 
 /**

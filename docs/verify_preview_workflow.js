@@ -170,7 +170,7 @@ async function runValidation() {
   });
   console.log(`  Document Upload Status: HTTP ${uploadRes.status} -> SHA-256: ${(uploadRes.data?.document?.sha256_hash || uploadRes.data?.sha256_hash)?.slice(0, 16)}...`);
 
-  // STEP 7: Authorized AICTE Approval via Decision Gate
+  // STEP 7: Authorized AICTE Approval via Decision Gate (Simulated Demo Outcome: DEMO_APPROVED)
   console.log('\n[STEP 7] Submitting Authorized AICTE Sanctioning Decision (Director Roy)...');
   const finalDecision = await apiRequest({
     method: 'POST',
@@ -179,7 +179,16 @@ async function runValidation() {
     body: { decision: 'APPROVE', rationale: 'All mandatory clearances completed, core-banking verification confirmed, and physical FDR certificate validated. Sanctioned.' }
   });
   console.log(`  Final Decision Status: HTTP ${finalDecision.status} -> New Case Status: ${finalDecision.data?.new_status}`);
-  console.log(`  Sanction Order / Release Document: ${finalDecision.data?.release_doc_type} -> ${finalDecision.data?.sanction_order_number}`);
+  console.log(`  Demo Reference: ${finalDecision.data?.sanction_order_number} (is_demo_approved: ${finalDecision.data?.is_demo_approved})`);
+
+  // Verify that official release remains disabled without live bank gateway
+  const offReleaseAttempt = await apiRequest({
+    method: 'POST',
+    path: `/api/cases/${caseId}/decision`,
+    headers: { 'Authorization': `Bearer ${aicteToken}` },
+    body: { decision: 'APPROVE', official_release: true, rationale: 'Testing official release rejection' }
+  });
+  console.log(`  Official Release Attempt (Without Live Gateway): HTTP ${offReleaseAttempt.status} (Expected: 422 Disabled) -> ${offReleaseAttempt.data?.error?.slice(0, 50)}...`);
 
   // STEP 8: Immutable Audit Trail Retrieval
   console.log('\n[STEP 8] Retrieving Immutable Chronological Audit Trail...');
@@ -205,7 +214,7 @@ async function runValidation() {
   console.log(`  PostgreSQL audit_events count: ${dbAudit.rows[0]?.count}`);
   console.log(`  PostgreSQL case_documents count: ${dbDocs.rows[0]?.count}`);
 
-  if (dbFinal.rows[0]?.status === 'APPROVED' && dbTasks.rows[0]?.count === 4 && dbAudit.rows[0]?.count >= 6 && dbDocs.rows[0]?.count >= 1) {
+  if (dbFinal.rows[0]?.status === 'DEMO_APPROVED' && dbTasks.rows[0]?.count === 4 && dbAudit.rows[0]?.count >= 6 && dbDocs.rows[0]?.count >= 1) {
     console.log('\n>>> SUCCESS: Complete End-to-End Workflow & Database Persistence Confirmed! <<<');
   } else {
     throw new Error('Database state did not match expected persistence conditions!');

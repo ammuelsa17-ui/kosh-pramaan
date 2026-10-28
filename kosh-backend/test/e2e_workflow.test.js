@@ -318,11 +318,12 @@ test.describe('KOSH-PRAMAAN End-to-End Workflow & Reliability Audit (PostgreSQL:
 
     assert.equal(approveRes.statusCode, 200, 'Decision gate must allow approval when all requirements met');
     assert.equal(approveRes.body.success, true);
-    assert.equal(approveRes.body.new_status, 'APPROVED');
+    assert.equal(approveRes.body.new_status, 'DEMO_APPROVED');
+    assert.equal(approveRes.body.is_demo_approved, true);
 
     // Verify persisted case status
     const caseRes = await makeRequest({ method: 'GET', url: '/api/cases/FDR-2026-001' });
-    assert.equal(caseRes.body.data.status, 'APPROVED');
+    assert.equal(caseRes.body.data.status, 'DEMO_APPROVED');
   });
 
   test('J. Retrieve audit trail for approved case: chronological order, actors, state transitions', async () => {

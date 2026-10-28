@@ -285,15 +285,24 @@ export default function CaseTable() {
                         {c.status === 'MISMATCH_FLAGGED' && 'Mismatch Flagged'}
                         {c.status === 'CLEARANCE_BLOCKED' && 'Clearance Blocked'}
                         {c.status === 'SUBMITTED' && 'Intake Submitted'}
-                        {c.status === 'APPROVED' && 'Approved'}
+                        {c.status === 'DEMO_APPROVED' && 'Demo Approved (Simulated)'}
+                        {c.status === 'APPROVED' && 'Approved (Official)'}
+                        {c.status === 'RELEASE_REQUESTED' && 'Release Requested'}
+                        {c.status === 'RELEASE_SANCTIONED' && 'Release Sanctioned'}
+                        {c.status === 'REFUNDED' && 'Refunded / Closed'}
                         {c.status === 'REJECTED' && 'Rejected'}
-                        {!['UNDER_REVIEW', 'MISMATCH_FLAGGED', 'CLEARANCE_BLOCKED', 'SUBMITTED', 'APPROVED', 'REJECTED'].includes(c.status) && c.status.replace(/_/g, ' ')}
+                        {!['UNDER_REVIEW', 'MISMATCH_FLAGGED', 'CLEARANCE_BLOCKED', 'SUBMITTED', 'DEMO_APPROVED', 'APPROVED', 'RELEASE_REQUESTED', 'RELEASE_SANCTIONED', 'REFUNDED', 'REJECTED'].includes(c.status) && c.status.replace(/_/g, ' ')}
                       </span>
                       {c.status === 'CLEARANCE_BLOCKED' && (
                         <div className="status-subtext-blocked">Pending Legal / Admin Clearance</div>
                       )}
                       {c.status === 'MISMATCH_FLAGGED' && (
-                        <div className="status-subtext-mismatch">Amount Discrepancy Flagged</div>
+                        <div className="status-subtext-mismatch">Discrepancy Flagged</div>
+                      )}
+                      {c.status === 'DEMO_APPROVED' && (
+                        <div className="status-subtext-demo" style={{ color: '#166534', fontSize: '0.7rem', marginTop: '0.2rem', fontWeight: 500 }}>
+                          &bull; Simulated Demo Approval (Not Official Release)
+                        </div>
                       )}
                     </td>
                     <td>
