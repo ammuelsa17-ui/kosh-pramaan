@@ -23,12 +23,16 @@ import {
   submitDecision,
   fetchAuditTrail,
   fetchCaseDetail,
-  resolveObjection
+  resolveObjection,
+  getActiveUser
 } from '../api/casesApi';
 
 export default function CaseDetailModal({ caseItem: initialCase, onClose, onCaseUpdated }) {
   const [caseItem, setCaseItem] = useState(initialCase);
   const [activeTab, setActiveTab] = useState('verification'); // 'verification', 'tasks', 'decision', 'audit'
+
+  const activeUser = getActiveUser();
+  const canApprove = activeUser && activeUser.role === 'AICTE_OFFICER';
 
   // Action states
   const [verifying, setVerifying] = useState(false);
@@ -47,6 +51,7 @@ export default function CaseDetailModal({ caseItem: initialCase, onClose, onCase
   const [officerRole, setOfficerRole] = useState('Competent Authority (Demo Role)');
   const [submittingDecision, setSubmittingDecision] = useState(false);
   const [gateViolation, setGateViolation] = useState(null);
+  const [forbiddenError, setForbiddenError] = useState(null);
   const [decisionSuccess, setDecisionSuccess] = useState(null);
 
   // Audit trail state
@@ -162,13 +167,12 @@ export default function CaseDetailModal({ caseItem: initialCase, onClose, onCase
 
     setSubmittingDecision(true);
     setGateViolation(null);
+    setForbiddenError(null);
     setDecisionSuccess(null);
 
     const res = await submitDecision(caseItem.id, {
       decision,
-      rationale,
-      officer_name: 'Demo Sanctioning Authority',
-      officer_role: officerRole
+      rationale
     });
     setSubmittingDecision(false);
 
@@ -177,6 +181,8 @@ export default function CaseDetailModal({ caseItem: initialCase, onClose, onCase
       setRationale('');
       await refreshCurrentCase();
       if (activeTab === 'audit') loadAudit();
+    } else if (res.isForbidden) {
+      setForbiddenError(res.error);
     } else if (res.isGateViolation) {
       setGateViolation(res.blockers);
     } else {
@@ -545,6 +551,25 @@ export default function CaseDetailModal({ caseItem: initialCase, onClose, onCase
                 The backend strictly recalculates blockers at execution time. Approval will be rejected (HTTP 422)
                 if mandatory clearance tasks are incomplete, verification is missing, or blocking objections remain active.
               </p>
+
+              {/* RBAC Notice */}
+              {!canApprove && (
+                <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '6px', fontSize: '0.825rem', color: '#92400e' }}>
+                  <ShieldAlert size={16} style={{ display: 'inline', verticalAlign: 'text-bottom', marginRight: '0.35rem' }} />
+                  <strong>RBAC Security Gate:</strong> Your current active role is <strong>{activeUser ? activeUser.role : 'Guest'}</strong>. Approval decisions are restricted to the <strong>AICTE_OFFICER</strong> (Director / Sanctioning Authority). If submitted, the server will enforce HTTP 403 Forbidden.
+                </div>
+              )}
+
+              {/* 403 Forbidden Banner */}
+              {forbiddenError && (
+                <div className="gate-rejection-card" style={{ borderLeftColor: '#dc2626', background: '#fef2f2' }}>
+                  <div className="rejection-title" style={{ color: '#b91c1c' }}>
+                    <ShieldAlert size={18} />
+                    <strong>Server-Enforced Access Denied (HTTP 403 Forbidden)</strong>
+                  </div>
+                  <p className="rejection-subtitle" style={{ color: '#991b1b', marginBottom: 0 }}>{forbiddenError}</p>
+                </div>
+              )}
 
               {/* Decision Gate Violation Banner */}
               {gateViolation && (

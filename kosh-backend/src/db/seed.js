@@ -33,7 +33,45 @@ export const SEED_CASES = [
       { id: 'TSK-102', name: 'Technical Tender Security Assessment', queue: 'TECHNICAL_QUEUE', is_mandatory: true, status: 'COMPLETED', completed_by: 'eng.technical@gov.in' },
       { id: 'TSK-103', name: 'Bank Branch Confirmation Review', queue: 'LEGAL_QUEUE', is_mandatory: true, status: 'IN_PROGRESS', completed_by: null }
     ],
-    objections: []
+    objections: [],
+    audit_events: [
+      {
+        id: 1,
+        case_id: 'FDR-2026-001',
+        action: 'SYSTEM_INITIAL_SEED',
+        actor: 'system-initializer',
+        actor_role: 'System Administrator',
+        rationale: 'Fictional demo FDR case ingested into platform ledger',
+        previous_state: null,
+        new_state: 'UNDER_REVIEW',
+        event_timestamp: new Date(Date.now() - 7200000).toISOString(),
+        metadata: { fdr_number: 'FDR/SBI/2026/894102', submitted_amount: 5000000.00 }
+      },
+      {
+        id: 2,
+        case_id: 'FDR-2026-001',
+        action: 'CLEARANCE_TASK_STATUS_UPDATED',
+        actor: 'officer.accounts@gov.in',
+        actor_role: 'CLEARANCE_OFFICER',
+        rationale: 'Original Physical Certificate verified against physical security register',
+        previous_state: 'PENDING',
+        new_state: 'COMPLETED',
+        event_timestamp: new Date(Date.now() - 3600000).toISOString(),
+        metadata: { taskId: 'TSK-101' }
+      },
+      {
+        id: 3,
+        case_id: 'FDR-2026-001',
+        action: 'CLEARANCE_TASK_STATUS_UPDATED',
+        actor: 'eng.technical@gov.in',
+        actor_role: 'CLEARANCE_OFFICER',
+        rationale: 'Technical Tender Security Assessment completed per norms',
+        previous_state: 'PENDING',
+        new_state: 'COMPLETED',
+        event_timestamp: new Date(Date.now() - 1800000).toISOString(),
+        metadata: { taskId: 'TSK-102' }
+      }
+    ]
   },
   {
     id: 'FDR-2026-002',
@@ -73,6 +111,20 @@ export const SEED_CASES = [
         description: 'Amount mismatch detected: Submitted ₹25,00,000.00 vs Simulated Bank Ledger ₹20,00,000.00 (SIMULATED — NOT LIVE BANK VERIFICATION). Clarification required from depositor.',
         is_blocking: true,
         status: 'ACTIVE'
+      }
+    ],
+    audit_events: [
+      {
+        id: 1,
+        case_id: 'FDR-2026-002',
+        action: 'SYSTEM_INITIAL_SEED',
+        actor: 'system-initializer',
+        actor_role: 'System Administrator',
+        rationale: 'Fictional demo FDR case ingested into platform ledger',
+        previous_state: null,
+        new_state: 'MISMATCH_FLAGGED',
+        event_timestamp: new Date(Date.now() - 3600000).toISOString(),
+        metadata: { fdr_number: 'FDR/PNB/2026/447812', submitted_amount: 2500000.00 }
       }
     ]
   },
@@ -116,6 +168,20 @@ export const SEED_CASES = [
         is_blocking: true,
         status: 'ACTIVE'
       }
+    ],
+    audit_events: [
+      {
+        id: 1,
+        case_id: 'FDR-2026-003',
+        action: 'SYSTEM_INITIAL_SEED',
+        actor: 'system-initializer',
+        actor_role: 'System Administrator',
+        rationale: 'Fictional demo FDR case ingested into platform ledger',
+        previous_state: null,
+        new_state: 'CLEARANCE_BLOCKED',
+        event_timestamp: new Date(Date.now() - 3600000).toISOString(),
+        metadata: { fdr_number: 'FDR/HDFC/2026/771920', submitted_amount: 10000000.00 }
+      }
     ]
   },
   {
@@ -138,7 +204,21 @@ export const SEED_CASES = [
       { id: 'TSK-401', name: 'Document Ingestion & File Legibility', queue: 'INTAKE_QUEUE', is_mandatory: true, status: 'PENDING' },
       { id: 'TSK-402', name: 'Core Deposit Verification', queue: 'ACCOUNTS_QUEUE', is_mandatory: true, status: 'PENDING' }
     ],
-    objections: []
+    objections: [],
+    audit_events: [
+      {
+        id: 1,
+        case_id: 'FDR-2026-004',
+        action: 'SYSTEM_INITIAL_SEED',
+        actor: 'system-initializer',
+        actor_role: 'System Administrator',
+        rationale: 'Fictional demo FDR case ingested into platform ledger',
+        previous_state: null,
+        new_state: 'SUBMITTED',
+        event_timestamp: new Date(Date.now() - 3600000).toISOString(),
+        metadata: { fdr_number: 'FDR/BOB/2026/119283', submitted_amount: 3500000.00 }
+      }
+    ]
   }
 ];
 
@@ -159,6 +239,8 @@ export function resetInMemorySeed() {
  */
 export async function seedDatabase() {
   console.log('[KOSH-PRAMAAN] Seeding fictional demo FDR cases into PostgreSQL...');
+  // Clean up any extraneous cases not belonging to the standard 4 seed cases
+  await query("DELETE FROM fdr_cases WHERE id NOT IN ('FDR-2026-001', 'FDR-2026-002', 'FDR-2026-003', 'FDR-2026-004')");
 
   for (const c of SEED_CASES) {
     // 1. Insert/Update FDR Case

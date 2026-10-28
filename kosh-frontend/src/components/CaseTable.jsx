@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, RefreshCw, AlertTriangle, CheckCircle2, ShieldAlert, Eye, Database, Info, FileText, Clock } from 'lucide-react';
+import { Search, Filter, RefreshCw, AlertTriangle, CheckCircle2, ShieldAlert, Eye, Database, Info, FileText, Clock, FilePlus } from 'lucide-react';
 import { fetchCases, fetchCaseDetail } from '../api/casesApi';
 import CaseDetailModal from './CaseDetailModal';
+import SubmitFdrModal from './SubmitFdrModal';
 
 export default function CaseTable() {
   const [cases, setCases] = useState([]);
@@ -9,6 +10,7 @@ export default function CaseTable() {
   const [error, setError] = useState(null);
   const [dataSource, setDataSource] = useState(null);
   const [dbError, setDbError] = useState(null);
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
 
   // Filters & Search
   const [searchTerm, setSearchTerm] = useState('');
@@ -202,6 +204,11 @@ export default function CaseTable() {
             <RefreshCw size={14} className={loading ? 'spin' : ''} />
             <span>Reload</span>
           </button>
+
+          <button className="btn-primary" style={{ padding: '0.4rem 0.75rem', fontSize: '0.8rem', whiteSpace: 'nowrap' }} onClick={() => setShowSubmitModal(true)}>
+            <FilePlus size={14} />
+            <span>Submit New FDR</span>
+          </button>
         </div>
       </div>
 
@@ -344,6 +351,16 @@ export default function CaseTable() {
           caseItem={selectedCase}
           onClose={() => setSelectedCase(null)}
           onCaseUpdated={() => loadCases()}
+        />
+      )}
+
+      {/* New FDR Application Modal */}
+      {showSubmitModal && (
+        <SubmitFdrModal
+          onClose={() => setShowSubmitModal(false)}
+          onCaseSubmitted={() => {
+            loadCases();
+          }}
         />
       )}
     </div>

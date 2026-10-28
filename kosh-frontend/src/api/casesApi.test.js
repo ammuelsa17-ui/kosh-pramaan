@@ -140,3 +140,57 @@ test('resolveObjection sends resolution remarks and returns updated objection', 
   }
 });
 
+test('submitNewFdrCase sends authenticated FDR data and returns created case', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    assert.ok(url.includes('/api/cases'));
+    assert.equal(options.method, 'POST');
+    const body = JSON.parse(options.body);
+    assert.equal(body.institution_name, 'Test College');
+    return {
+      ok: true,
+      status: 201,
+      json: async () => ({
+        success: true,
+        case_id: 'FDR-2026-005',
+        data: { id: 'FDR-2026-005', status: 'SUBMITTED', fdr_number: body.fdr_number }
+      })
+    };
+  };
+
+  try {
+    const res = await (await import('./casesApi.js')).submitNewFdrCase({
+      institution_name: 'Test College',
+      fdr_number: 'FDR/TEST/001'
+    });
+    assert.equal(res.ok, true);
+    assert.equal(res.caseId, 'FDR-2026-005');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('fetchDemoUsers retrieves available profiles with pre-signed demo tokens', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    assert.ok(url.includes('/api/auth/demo-users'));
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        count: 5,
+        users: [{ id: '1', role: 'INSTITUTION' }, { id: '2', role: 'AICTE_OFFICER' }]
+      })
+    };
+  };
+
+  try {
+    const res = await (await import('./casesApi.js')).fetchDemoUsers();
+    assert.equal(res.ok, true);
+    assert.equal(res.users.length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+

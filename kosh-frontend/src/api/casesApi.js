@@ -2,6 +2,119 @@ const BACKEND_BASE_URL = typeof import.meta !== 'undefined' && import.meta.env &
   ? import.meta.env.VITE_API_URL
   : (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.PROD ? '' : 'http://localhost:5001');
 
+// Local in-memory / session storage for active authenticated user
+let activeToken = typeof window !== 'undefined' ? (window.sessionStorage.getItem('kosh_auth_token') || null) : null;
+let activeUser = typeof window !== 'undefined' ? JSON.parse(window.sessionStorage.getItem('kosh_auth_user') || 'null') : null;
+
+export function getAuthToken() {
+  return activeToken;
+}
+
+export function getActiveUser() {
+  return activeUser;
+}
+
+export function setActiveAuth(token, user) {
+  activeToken = token;
+  activeUser = user;
+  if (typeof window !== 'undefined') {
+    if (token) window.sessionStorage.setItem('kosh_auth_token', token);
+    else window.sessionStorage.removeItem('kosh_auth_token');
+    if (user) window.sessionStorage.setItem('kosh_auth_user', JSON.stringify(user));
+    else window.sessionStorage.removeItem('kosh_auth_user');
+    window.dispatchEvent(new Event('kosh_auth_changed'));
+  }
+}
+
+function getHeaders(extra = {}) {
+  const h = { 'Accept': 'application/json', ...extra };
+  if (activeToken) {
+    h['Authorization'] = `Bearer ${activeToken}`;
+  }
+  return h;
+}
+
+/**
+ * Fetch available demo user accounts with pre-signed tokens
+ */
+export async function fetchDemoUsers() {
+  try {
+    const res = await fetch(`${BACKEND_BASE_URL}/api/auth/demo-users`, {
+      method: 'GET',
+      headers: getHeaders()
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return { ok: true, users: data.users || [] };
+  } catch (err) {
+    return { ok: false, error: err.message, users: [] };
+  }
+}
+
+/**
+ * Log in as a demo user or role
+ */
+export async function loginAsDemoUser(userOrRole) {
+  try {
+    const body = typeof userOrRole === 'string' ? { role: userOrRole } : { username: userOrRole.username };
+    const res = await fetch(`${BACKEND_BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const payload = await res.json();
+    if (!res.ok) {
+      return { ok: false, error: payload.error || payload.message };
+    }
+    setActiveAuth(payload.token, payload.user);
+    return { ok: true, token: payload.token, user: payload.user };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Submit a new FDR Application (Institutional Portal)
+ */
+export async function submitNewFdrCase(formData) {
+  try {
+    const res = await fetch(`${BACKEND_BASE_URL}/api/cases`, {
+      method: 'POST',
+      headers: getHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(formData)
+    });
+
+    const payload = await res.json();
+
+    if (res.status === 403) {
+      return {
+        ok: false,
+        isForbidden: true,
+        error: payload.message || 'Access Denied: Your active role cannot submit FDR applications.'
+      };
+    }
+
+    if (res.status === 401) {
+      return {
+        ok: false,
+        isUnauthorized: true,
+        error: 'Authentication Required: Please log in with a valid user role.'
+      };
+    }
+
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: payload.error || payload.message || `HTTP ${res.status}`
+      };
+    }
+
+    return { ok: true, caseId: payload.case_id, data: payload.data };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Failed to submit FDR application' };
+  }
+}
+
 /**
  * Fetch all FDR cases from the backend.
  */
@@ -12,7 +125,7 @@ export async function fetchCases() {
 
     const res = await fetch(`${BACKEND_BASE_URL}/api/cases`, {
       method: 'GET',
-      headers: { 'Accept': 'application/json' },
+      headers: getHeaders(),
       signal: controller.signal
     });
 
@@ -48,7 +161,7 @@ export async function fetchCaseDetail(caseId) {
 
     const res = await fetch(`${BACKEND_BASE_URL}/api/cases/${encodeURIComponent(caseId)}`, {
       method: 'GET',
-      headers: { 'Accept': 'application/json' },
+      headers: getHeaders(),
       signal: controller.signal
     });
 
@@ -75,21 +188,18 @@ export async function fetchCaseDetail(caseId) {
 /**
  * Execute simulated core-banking verification for an FDR case.
  */
-export async function runSimulatedVerification(caseId, { officer_name, officer_role } = {}) {
+export async function runSimulatedVerification(caseId) {
   try {
     const res = await fetch(`${BACKEND_BASE_URL}/api/cases/${encodeURIComponent(caseId)}/simulate-verify`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify({
-        officer_name: officer_name || 'Verification Officer (Demo)',
-        officer_role: officer_role || 'Verification Officer'
-      })
+      headers: getHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({})
     });
 
     const payload = await res.json();
+    if (res.status === 403) {
+      return { ok: false, isForbidden: true, error: payload.message || 'Access Denied: Insufficient role permissions.' };
+    }
     if (!res.ok) {
       return { ok: false, error: payload.error || `HTTP ${res.status}` };
     }
@@ -102,24 +212,22 @@ export async function runSimulatedVerification(caseId, { officer_name, officer_r
 /**
  * Update clearance task status (Complete, Block, In-Progress).
  */
-export async function updateClearanceTask(caseId, taskId, { status, blocker_reason, remarks, officer_name, officer_role }) {
+export async function updateClearanceTask(caseId, taskId, { status, blocker_reason, remarks }) {
   try {
     const res = await fetch(`${BACKEND_BASE_URL}/api/cases/${encodeURIComponent(caseId)}/tasks/${encodeURIComponent(taskId)}`, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
+      headers: getHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         status,
         blocker_reason,
-        remarks,
-        officer_name: officer_name || 'Clearance Officer (Demo)',
-        officer_role: officer_role || 'Clearance Officer'
+        remarks
       })
     });
 
     const payload = await res.json();
+    if (res.status === 403) {
+      return { ok: false, isForbidden: true, error: payload.message || 'Access Denied: Insufficient role permissions.' };
+    }
     if (!res.ok) {
       return { ok: false, error: payload.error || `HTTP ${res.status}` };
     }
@@ -132,23 +240,27 @@ export async function updateClearanceTask(caseId, taskId, { status, blocker_reas
 /**
  * Submit an officer decision (APPROVE, REJECT, SEEK_CLARIFICATION) through the Decision Gate.
  */
-export async function submitDecision(caseId, { decision, rationale, officer_name, officer_role }) {
+export async function submitDecision(caseId, { decision, rationale }) {
   try {
     const res = await fetch(`${BACKEND_BASE_URL}/api/cases/${encodeURIComponent(caseId)}/decision`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
+      headers: getHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         decision,
-        rationale,
-        officer_name: officer_name || 'Competent Authority (Demo)',
-        officer_role: officer_role || 'Executive Approver (Demo Role)'
+        rationale
       })
     });
 
     const payload = await res.json();
+
+    if (res.status === 403) {
+      return {
+        ok: false,
+        isForbidden: true,
+        error: payload.message || 'Access Denied: Only an authorized AICTE Sanctioning Authority can record final decisions.'
+      };
+    }
+
     if (res.status === 422) {
       // Decision Gate Violation
       return {
@@ -176,7 +288,7 @@ export async function fetchAuditTrail(caseId) {
   try {
     const res = await fetch(`${BACKEND_BASE_URL}/api/cases/${encodeURIComponent(caseId)}/audit-trail`, {
       method: 'GET',
-      headers: { 'Accept': 'application/json' }
+      headers: getHeaders()
     });
 
     const payload = await res.json();
@@ -192,23 +304,21 @@ export async function fetchAuditTrail(caseId) {
 /**
  * Resolve or overrule an objection with mandatory documented remarks.
  */
-export async function resolveObjection(caseId, objId, { status = 'RESOLVED', resolution_remarks, officer_name, officer_role }) {
+export async function resolveObjection(caseId, objId, { status = 'RESOLVED', resolution_remarks }) {
   try {
     const res = await fetch(`${BACKEND_BASE_URL}/api/cases/${encodeURIComponent(caseId)}/objections/${encodeURIComponent(objId)}`, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
+      headers: getHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         status,
-        resolution_remarks,
-        officer_name: officer_name || 'Nodal Officer (Demo)',
-        officer_role: officer_role || 'Competent Authority'
+        resolution_remarks
       })
     });
 
     const payload = await res.json();
+    if (res.status === 403) {
+      return { ok: false, isForbidden: true, error: payload.message || 'Access Denied: Insufficient role permissions.' };
+    }
     if (!res.ok) {
       return { ok: false, error: payload.error || `HTTP ${res.status}` };
     }
@@ -217,4 +327,3 @@ export async function resolveObjection(caseId, objId, { status = 'RESOLVED', res
     return { ok: false, error: err.message || 'Objection resolution request failed' };
   }
 }
-

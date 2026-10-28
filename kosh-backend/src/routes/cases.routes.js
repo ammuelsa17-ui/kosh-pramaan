@@ -1,8 +1,23 @@
 import express from 'express';
 import { query, getClient } from '../config/db.js';
 import { SEED_CASES } from '../db/seed.js';
+import { authenticate, optionalAuth, requireRole } from '../auth/middleware.js';
+import { ROLES } from '../auth/roles.js';
 
 const router = express.Router();
+
+/**
+ * Determines whether database persistence is strictly enforced.
+ * When true, failures in database operations abort mutations and return HTTP 503
+ * rather than silently falling back to in-memory state.
+ */
+function shouldEnforceDatabase() {
+  return Boolean(
+    process.env.DATABASE_URL ||
+    process.env.STRICT_PERSISTENCE === 'true' ||
+    process.env.NODE_ENV === 'production'
+  );
+}
 
 /**
  * GET /api/cases
@@ -82,6 +97,266 @@ router.get('/cases', async (req, res) => {
 });
 
 /**
+ * POST /api/cases
+ * Submits a new FDR application (Institutional Portal)
+ * Strict RBAC: Requires INSTITUTION or AICTE_OFFICER role
+ */
+router.post('/cases', authenticate, requireRole(ROLES.INSTITUTION, ROLES.AICTE_OFFICER), async (req, res) => {
+  const {
+    institution_name,
+    depositor_name,
+    fdr_number,
+    issuing_bank,
+    branch_name,
+    ifsc_code,
+    submitted_amount,
+    lien_marked_to,
+    deposit_date,
+    maturity_date,
+    document_filename
+  } = req.body || {};
+
+  // Validation
+  const requiredFields = [
+    { field: 'institution_name', label: 'Institution Name' },
+    { field: 'depositor_name', label: 'Depositor Name' },
+    { field: 'fdr_number', label: 'FDR Number' },
+    { field: 'issuing_bank', label: 'Issuing Bank' },
+    { field: 'branch_name', label: 'Branch Name' },
+    { field: 'ifsc_code', label: 'IFSC Code' },
+    { field: 'submitted_amount', label: 'Submitted Amount' },
+    { field: 'lien_marked_to', label: 'Lien Marked To' },
+    { field: 'deposit_date', label: 'Deposit Date' },
+    { field: 'maturity_date', label: 'Maturity Date' }
+  ];
+
+  const missing = requiredFields.filter(f => !req.body[f.field] || String(req.body[f.field]).trim() === '');
+  if (missing.length > 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Validation Error: Missing required fields',
+      missing_fields: missing.map(f => f.label)
+    });
+  }
+
+  const amountNum = parseFloat(submitted_amount);
+  if (isNaN(amountNum) || amountNum <= 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Validation Error: submitted_amount must be a valid positive number'
+    });
+  }
+
+  const depDate = new Date(deposit_date);
+  const matDate = new Date(maturity_date);
+  if (isNaN(depDate.getTime()) || isNaN(matDate.getTime())) {
+    return res.status(400).json({
+      success: false,
+      error: 'Validation Error: deposit_date and maturity_date must be valid date strings'
+    });
+  }
+
+  if (matDate <= depDate) {
+    return res.status(400).json({
+      success: false,
+      error: 'Validation Error: maturity_date must be after deposit_date'
+    });
+  }
+
+  const trimmedFdr = fdr_number.trim();
+  const docFile = document_filename ? document_filename.trim() : `${trimmedFdr.replace(/[^a-zA-Z0-9]/g, '_')}_Certificate.pdf`;
+
+  try {
+    // Check duplicate FDR number in database
+    const dupCheck = await query('SELECT id FROM fdr_cases WHERE fdr_number = $1', [trimmedFdr]);
+    if (dupCheck.rows.length > 0) {
+      return res.status(409).json({
+        success: false,
+        error: `Conflict: An FDR record with number "${trimmedFdr}" is already registered in the system (Case ID: ${dupCheck.rows[0].id}).`
+      });
+    }
+
+    // Generate unique Case ID
+    const countRes = await query('SELECT COUNT(*)::INT as count FROM fdr_cases');
+    const seq = (countRes.rows[0].count + 1).toString().padStart(3, '0');
+    const newCaseId = `FDR-2026-${seq}`;
+
+    const client = await getClient();
+    try {
+      await client.query('BEGIN');
+
+      // 1. Insert fdr_case
+      await client.query(
+        `INSERT INTO fdr_cases (
+          id, institution_name, depositor_name, fdr_number, issuing_bank, branch_name,
+          ifsc_code, submitted_amount, lien_marked_to, deposit_date, maturity_date,
+          status, department_queue, document_filename, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'SUBMITTED', 'INTAKE_QUEUE', $12, NOW(), NOW())`,
+        [
+          newCaseId, institution_name.trim(), depositor_name.trim(), trimmedFdr,
+          issuing_bank.trim(), branch_name.trim(), ifsc_code.trim().toUpperCase(),
+          amountNum.toFixed(2), lien_marked_to.trim(), deposit_date, maturity_date, docFile
+        ]
+      );
+
+      // 2. Initialize 3 mandatory departmental clearance tasks
+      const defaultTasks = [
+        { id: `TSK-${newCaseId}-1`, name: 'Accounts Reconciliation & Amount Cross-check', queue: 'ACCOUNTS_QUEUE' },
+        { id: `TSK-${newCaseId}-2`, name: 'Bank Branch Lien Endorsement & Seal Verification', queue: 'LEGAL_QUEUE' },
+        { id: `TSK-${newCaseId}-3`, name: 'AICTE Norms & Security Deposit Adequacy Audit', queue: 'TECHNICAL_QUEUE' }
+      ];
+
+      for (const t of defaultTasks) {
+        await client.query(
+          `INSERT INTO clearance_tasks (id, case_id, task_name, queue_name, is_mandatory, status, created_at)
+           VALUES ($1, $2, $3, $4, true, 'PENDING', NOW())`,
+          [t.id, newCaseId, t.name, t.queue]
+        );
+      }
+
+      // 3. Record creation audit event with verified actor from token
+      await client.query(
+        `INSERT INTO audit_events (case_id, action, actor, actor_role, rationale, previous_state, new_state, metadata)
+         VALUES ($1, $2, $3, $4, $5, NULL, 'SUBMITTED', $6)`,
+        [
+          newCaseId,
+          'FDR_APPLICATION_SUBMITTED',
+          req.user.name,
+          req.user.role,
+          'Institutional security deposit application received and assigned to INTAKE_QUEUE.',
+          JSON.stringify({
+            fdr_number: trimmedFdr,
+            submitted_amount: amountNum,
+            issuing_bank: issuing_bank.trim(),
+            depositor_name: depositor_name.trim(),
+            verified_user_id: req.user.id
+          })
+        ]
+      );
+
+      await client.query('COMMIT');
+
+      return res.status(201).json({
+        success: true,
+        source: 'POSTGRESQL',
+        message: 'FDR application submitted successfully and queued for departmental clearance.',
+        case_id: newCaseId,
+        data: {
+          id: newCaseId,
+          institution_name: institution_name.trim(),
+          depositor_name: depositor_name.trim(),
+          fdr_number: trimmedFdr,
+          issuing_bank: issuing_bank.trim(),
+          submitted_amount: amountNum.toFixed(2),
+          status: 'SUBMITTED',
+          department_queue: 'INTAKE_QUEUE',
+          document_filename: docFile,
+          pending_tasks: 3,
+          blocked_tasks: 0,
+          active_objections: 0,
+          created_at: new Date().toISOString()
+        }
+      });
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    if (shouldEnforceDatabase()) {
+      return res.status(503).json({
+        success: false,
+        error: 'Database Service Unavailable: Persistent database transaction failed. Submission aborted to protect data integrity.',
+        persistence_status: 'FAILED',
+        detail: err.message
+      });
+    }
+
+    console.warn(`[KOSH-PRAMAAN] Database submission fallback (${err.message})`);
+
+    // In-memory fallback
+    const exists = SEED_CASES.find(c => c.fdr_number.toLowerCase() === trimmedFdr.toLowerCase());
+    if (exists) {
+      return res.status(409).json({
+        success: false,
+        error: `Conflict: An FDR record with number "${trimmedFdr}" is already registered (Fallback ID: ${exists.id}).`
+      });
+    }
+
+    const newCaseId = `FDR-2026-${(SEED_CASES.length + 1).toString().padStart(3, '0')}`;
+    const newFallbackCase = {
+      id: newCaseId,
+      institution_name: institution_name.trim(),
+      depositor_name: depositor_name.trim(),
+      fdr_number: trimmedFdr,
+      issuing_bank: issuing_bank.trim(),
+      branch_name: branch_name.trim(),
+      ifsc_code: ifsc_code.trim().toUpperCase(),
+      submitted_amount: amountNum.toFixed(2),
+      lien_marked_to: lien_marked_to.trim(),
+      deposit_date,
+      maturity_date,
+      status: 'SUBMITTED',
+      department_queue: 'INTAKE_QUEUE',
+      document_filename: docFile,
+      created_at: new Date().toISOString(),
+      tasks: [
+        { id: `TSK-${newCaseId}-1`, name: 'Accounts Reconciliation & Amount Cross-check', queue: 'ACCOUNTS_QUEUE', is_mandatory: true, status: 'PENDING' },
+        { id: `TSK-${newCaseId}-2`, name: 'Bank Branch Lien Endorsement & Seal Verification', queue: 'LEGAL_QUEUE', is_mandatory: true, status: 'PENDING' },
+        { id: `TSK-${newCaseId}-3`, name: 'AICTE Norms & Security Deposit Adequacy Audit', queue: 'TECHNICAL_QUEUE', is_mandatory: true, status: 'PENDING' }
+      ],
+      objections: [],
+      simulated: null,
+      audit_events: [
+        {
+          id: 1,
+          case_id: newCaseId,
+          action: 'FDR_APPLICATION_SUBMITTED',
+          actor: req.user.name,
+          actor_role: req.user.role,
+          rationale: 'Institutional security deposit application received and assigned to INTAKE_QUEUE.',
+          previous_state: null,
+          new_state: 'SUBMITTED',
+          event_timestamp: new Date().toISOString(),
+          metadata: {
+            fdr_number: trimmedFdr,
+            submitted_amount: amountNum,
+            issuing_bank: issuing_bank.trim(),
+            depositor_name: depositor_name.trim(),
+            is_demo_action: Boolean(req.user.is_demo)
+          }
+        }
+      ]
+    };
+
+    SEED_CASES.push(newFallbackCase);
+
+    return res.status(201).json({
+      success: true,
+      source: 'SEEDED_FALLBACK',
+      persistence_status: 'EPHEMERAL_DEMO_MEMORY',
+      simulation_warning: 'Notice: Running in ephemeral prototype fallback. Data is not saved to persistent cloud storage.',
+      message: 'FDR application registered in prototype in-memory state.',
+      case_id: newCaseId,
+      data: {
+        id: newCaseId,
+        institution_name: newFallbackCase.institution_name,
+        depositor_name: newFallbackCase.depositor_name,
+        fdr_number: newFallbackCase.fdr_number,
+        submitted_amount: newFallbackCase.submitted_amount,
+        status: newFallbackCase.status,
+        department_queue: newFallbackCase.department_queue,
+        pending_tasks: 3,
+        blocked_tasks: 0,
+        active_objections: 0,
+        created_at: newFallbackCase.created_at
+      }
+    });
+  }
+});
+
+/**
  * GET /api/cases/:id
  * Returns single FDR case detail including submitted vs simulated bank data,
  * clearance tasks, and objections.
@@ -145,9 +420,8 @@ router.get('/cases/:id', async (req, res) => {
  * Preserves submitted values. Flags mismatches.
  * Labels every result "SIMULATED — NOT LIVE BANK VERIFICATION".
  */
-router.post('/cases/:id/simulate-verify', async (req, res) => {
+router.post('/cases/:id/simulate-verify', authenticate, requireRole(ROLES.VERIFICATION_OFFICER, ROLES.AICTE_OFFICER), async (req, res) => {
   const caseId = req.params.id;
-  const { officer_name, officer_role } = req.body || {};
 
   try {
     const caseResult = await query(`SELECT * FROM fdr_cases WHERE id = $1`, [caseId]);
@@ -216,7 +490,7 @@ router.post('/cases/:id/simulate-verify', async (req, res) => {
             `INSERT INTO objections (id, case_id, raised_by_role, category, description, is_blocking, status)
              VALUES ($1, $2, $3, $4, $5, $6, $7)`,
             [
-              objId, caseId, officer_role || 'Simulation Engine', 'AMOUNT_MISMATCH',
+              objId, caseId, req.user?.role || 'VERIFICATION_OFFICER', 'AMOUNT_MISMATCH',
               `Discrepancy detected: Submitted ₹${submittedAmountNum.toLocaleString('en-IN')} vs Simulated Bank Ledger ₹${simulatedAmount.toLocaleString('en-IN')} (SIMULATED — NOT LIVE BANK VERIFICATION)`,
               true, 'ACTIVE'
             ]
@@ -234,8 +508,8 @@ router.post('/cases/:id/simulate-verify', async (req, res) => {
         [
           caseId,
           'SIMULATED_VERIFICATION_EXECUTED',
-          officer_name || 'Verification Officer (Demo)',
-          officer_role || 'Verification Officer',
+          req.user.name,
+          req.user.role,
           amountMatched
             ? 'Simulated verification completed: submitted amount matches simulated ledger.'
             : `Simulated verification discrepancy flagged: submitted ₹${submittedAmountNum} vs simulated ₹${simulatedAmount}. Requires human review.`,
@@ -274,6 +548,15 @@ router.post('/cases/:id/simulate-verify', async (req, res) => {
       client.release();
     }
   } catch (err) {
+    if (shouldEnforceDatabase()) {
+      return res.status(503).json({
+        success: false,
+        error: 'Database Service Unavailable: Persistent database verification failed. State change aborted.',
+        persistence_status: 'FAILED',
+        detail: err.message
+      });
+    }
+
     console.warn(`[KOSH-PRAMAAN] Database simulation fallback (${err.message})`);
     const seedCase = SEED_CASES.find(sc => sc.id === caseId);
     if (!seedCase) {
@@ -296,15 +579,35 @@ router.post('/cases/:id/simulate-verify', async (req, res) => {
       simulation_disclaimer: 'SIMULATED — NOT LIVE BANK VERIFICATION'
     };
 
+    const prevStatus = seedCase.status;
     if (!amountMatched) {
       seedCase.status = 'MISMATCH_FLAGGED';
     } else if (seedCase.status === 'SUBMITTED') {
       seedCase.status = 'UNDER_REVIEW';
     }
 
+    // Maintain in-memory audit log for simulation
+    seedCase.audit_events = seedCase.audit_events || [];
+    seedCase.audit_events.push({
+      id: seedCase.audit_events.length + 1,
+      case_id: caseId,
+      action: 'CORE_BANKING_VERIFICATION_SIMULATED',
+      actor: req.user?.name || 'Simulation Engine',
+      actor_role: req.user?.role || 'VERIFICATION_OFFICER',
+      rationale: 'Simulated core-banking ledger comparison executed',
+      previous_state: prevStatus,
+      new_state: seedCase.status,
+      event_timestamp: new Date().toISOString(),
+      metadata: {
+        amount_matched: amountMatched,
+        is_demo_action: Boolean(req.user?.is_demo)
+      }
+    });
+
     return res.status(200).json({
       success: true,
       source: 'SEEDED_FALLBACK',
+      persistence_status: 'EPHEMERAL_DEMO_MEMORY',
       message: 'Simulated verification executed successfully (in-memory mode)',
       disclaimer: 'SIMULATED — NOT LIVE BANK VERIFICATION',
       result: {
@@ -325,9 +628,9 @@ router.post('/cases/:id/simulate-verify', async (req, res) => {
  * Records state change in audit_events.
  * Does NOT resolve unrelated objections.
  */
-router.put('/cases/:id/tasks/:taskId', async (req, res) => {
+router.put('/cases/:id/tasks/:taskId', authenticate, requireRole(ROLES.CLEARANCE_OFFICER, ROLES.AICTE_OFFICER), async (req, res) => {
   const { id: caseId, taskId } = req.params;
-  const { status, blocker_reason, remarks, officer_name, officer_role } = req.body || {};
+  const { status, blocker_reason, remarks } = req.body || {};
 
   const allowedStatuses = ['PENDING', 'IN_PROGRESS', 'COMPLETED', 'BLOCKED'];
   if (!status || !allowedStatuses.includes(status)) {
@@ -375,7 +678,7 @@ router.put('/cases/:id/tasks/:taskId', async (req, res) => {
       }
 
       // Update task
-      const completedBy = status === 'COMPLETED' ? (officer_name || 'Clearance Officer (Demo)') : null;
+      const completedBy = status === 'COMPLETED' ? req.user.name : null;
       const completedAt = status === 'COMPLETED' ? new Date() : null;
       await client.query(
         `UPDATE clearance_tasks 
@@ -410,8 +713,8 @@ router.put('/cases/:id/tasks/:taskId', async (req, res) => {
         [
           caseId,
           'CLEARANCE_TASK_UPDATED',
-          officer_name || 'Clearance Officer (Demo)',
-          officer_role || 'Clearance Officer',
+          req.user.name,
+          req.user.role,
           remarks || blocker_reason || `Task status updated to ${status}`,
           prevTask.status,
           status,
@@ -444,6 +747,15 @@ router.put('/cases/:id/tasks/:taskId', async (req, res) => {
       client.release();
     }
   } catch (err) {
+    if (shouldEnforceDatabase()) {
+      return res.status(503).json({
+        success: false,
+        error: 'Database Service Unavailable: Persistent database clearance task update failed.',
+        persistence_status: 'FAILED',
+        detail: err.message
+      });
+    }
+
     console.warn(`[KOSH-PRAMAAN] Database task update fallback (${err.message})`);
     const seedCase = SEED_CASES.find(sc => sc.id === caseId);
     if (!seedCase) {
@@ -461,17 +773,40 @@ router.put('/cases/:id/tasks/:taskId', async (req, res) => {
       });
     }
 
+    const prevTaskStatus = task.status;
     task.status = status;
     task.blocker_reason = status === 'BLOCKED' ? blocker_reason : null;
-    task.completed_by = status === 'COMPLETED' ? (officer_name || 'Clearance Officer (Demo)') : null;
+    task.completed_by = status === 'COMPLETED' ? (req.user?.name || 'Clearance Officer (Demo)') : null;
 
     if (status === 'BLOCKED') {
       seedCase.status = 'CLEARANCE_BLOCKED';
     }
 
+    // Maintain in-memory audit log for task updates
+    seedCase.audit_events = seedCase.audit_events || [];
+    seedCase.audit_events.push({
+      id: seedCase.audit_events.length + 1,
+      case_id: caseId,
+      action: 'CLEARANCE_TASK_UPDATED',
+      actor: req.user?.name || 'Clearance Officer (Demo)',
+      actor_role: req.user?.role || 'CLEARANCE_OFFICER',
+      rationale: remarks || blocker_reason || `Task status updated to ${status}`,
+      previous_state: prevTaskStatus,
+      new_state: status,
+      event_timestamp: new Date().toISOString(),
+      metadata: {
+        task_id: taskId,
+        task_name: task.name,
+        queue_name: task.queue,
+        is_mandatory: task.is_mandatory,
+        is_demo_action: Boolean(req.user?.is_demo)
+      }
+    });
+
     return res.status(200).json({
       success: true,
       source: 'SEEDED_FALLBACK',
+      persistence_status: 'EPHEMERAL_DEMO_MEMORY',
       message: `Task ${taskId} updated to ${status} (in-memory)`,
       task
     });
@@ -483,9 +818,9 @@ router.put('/cases/:id/tasks/:taskId', async (req, res) => {
  * Resolves or overrules an objection through an explicitly supported, auditable workflow.
  * Requires resolution_remarks and records actor/action/time/reason in audit_events.
  */
-router.put('/cases/:id/objections/:objId', async (req, res) => {
+router.put('/cases/:id/objections/:objId', authenticate, requireRole(ROLES.CLEARANCE_OFFICER, ROLES.AICTE_OFFICER), async (req, res) => {
   const { id: caseId, objId } = req.params;
-  const { status, resolution_remarks, officer_name, officer_role } = req.body || {};
+  const { status, resolution_remarks } = req.body || {};
 
   const allowedStatuses = ['RESOLVED', 'OVERRULED'];
   if (!status || !allowedStatuses.includes(status)) {
@@ -554,8 +889,8 @@ router.put('/cases/:id/objections/:objId', async (req, res) => {
         [
           caseId,
           `OBJECTION_${status}`,
-          officer_name || 'Nodal Officer (Demo)',
-          officer_role || 'Competent Authority',
+          req.user.name,
+          req.user.role,
           resolution_remarks,
           prevObj.status,
           status,
@@ -586,6 +921,15 @@ router.put('/cases/:id/objections/:objId', async (req, res) => {
       client.release();
     }
   } catch (err) {
+    if (shouldEnforceDatabase()) {
+      return res.status(503).json({
+        success: false,
+        error: 'Database Service Unavailable: Persistent database objection update failed.',
+        persistence_status: 'FAILED',
+        detail: err.message
+      });
+    }
+
     console.warn(`[KOSH-PRAMAAN] Database objection update fallback (${err.message})`);
     const seedCase = SEED_CASES.find(sc => sc.id === caseId);
     if (!seedCase) {
@@ -596,6 +940,7 @@ router.put('/cases/:id/objections/:objId', async (req, res) => {
       return res.status(404).json({ success: false, error: `Objection ${objId} not found for case ${caseId}` });
     }
 
+    const prevObjStatus = obj.status;
     obj.status = status;
     obj.resolution_remarks = resolution_remarks;
 
@@ -604,9 +949,29 @@ router.put('/cases/:id/objections/:objId', async (req, res) => {
       seedCase.status = 'UNDER_REVIEW';
     }
 
+    // Maintain in-memory audit log for objection resolution
+    seedCase.audit_events = seedCase.audit_events || [];
+    seedCase.audit_events.push({
+      id: seedCase.audit_events.length + 1,
+      case_id: caseId,
+      action: `OBJECTION_${status}`,
+      actor: req.user?.name || 'Clearance Officer (Demo)',
+      actor_role: req.user?.role || 'CLEARANCE_OFFICER',
+      rationale: resolution_remarks,
+      previous_state: prevObjStatus,
+      new_state: status,
+      event_timestamp: new Date().toISOString(),
+      metadata: {
+        objId,
+        resolution_remarks,
+        is_demo_action: Boolean(req.user?.is_demo)
+      }
+    });
+
     return res.status(200).json({
       success: true,
       source: 'SEEDED_FALLBACK',
+      persistence_status: 'EPHEMERAL_DEMO_MEMORY',
       message: `Objection ${objId} marked as ${status} (in-memory)`,
       objection: obj
     });
@@ -621,9 +986,9 @@ router.put('/cases/:id/objections/:objId', async (req, res) => {
  * blocking objections exist, or verification is absent.
  * Does NOT trust frontend readiness flags.
  */
-router.post('/cases/:id/decision', async (req, res) => {
+router.post('/cases/:id/decision', authenticate, requireRole(ROLES.AICTE_OFFICER), async (req, res) => {
   const caseId = req.params.id;
-  const { decision, rationale, officer_name, officer_role } = req.body || {};
+  const { decision, rationale } = req.body || {};
 
   const allowedDecisions = ['APPROVE', 'REJECT', 'SEEK_CLARIFICATION'];
   if (!decision || !allowedDecisions.includes(decision)) {
@@ -721,7 +1086,7 @@ router.post('/cases/:id/decision', async (req, res) => {
           `INSERT INTO objections (id, case_id, raised_by_role, category, description, is_blocking, status)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [
-            objId, caseId, officer_role || 'Sanctioning Officer (Demo)', 'CLARIFICATION_REQUIRED',
+            objId, caseId, req.user?.role || 'AICTE_OFFICER', 'CLARIFICATION_REQUIRED',
             rationale, true, 'ACTIVE'
           ]
         );
@@ -736,12 +1101,12 @@ router.post('/cases/:id/decision', async (req, res) => {
         [
           caseId,
           `DECISION_${decision}`,
-          officer_name || 'Competent Authority (Demo)',
-          officer_role || 'Executive Approver (Demo Role)',
+          req.user.name,
+          req.user.role,
           rationale,
           c.status,
           newStatus,
-          JSON.stringify({ decision, officer_role, demo_mode: true })
+          JSON.stringify({ decision, authorized_role: req.user.role, authenticated_user_id: req.user.id })
         ]
       );
 
@@ -762,6 +1127,15 @@ router.post('/cases/:id/decision', async (req, res) => {
       client.release();
     }
   } catch (err) {
+    if (shouldEnforceDatabase()) {
+      return res.status(503).json({
+        success: false,
+        error: 'Database Service Unavailable: Persistent database decision gate evaluation failed.',
+        persistence_status: 'FAILED',
+        detail: err.message
+      });
+    }
+
     console.warn(`[KOSH-PRAMAAN] Database decision fallback (${err.message})`);
     const seedCase = SEED_CASES.find(sc => sc.id === caseId);
     if (!seedCase) {
@@ -800,14 +1174,49 @@ router.post('/cases/:id/decision', async (req, res) => {
         });
       }
 
+      const prevStatus = seedCase.status;
       seedCase.status = 'APPROVED';
+
+      // Maintain in-memory audit log for decision
+      seedCase.audit_events = seedCase.audit_events || [];
+      seedCase.audit_events.push({
+        id: seedCase.audit_events.length + 1,
+        case_id: caseId,
+        action: `OFFICER_DECISION_${decision}`,
+        actor: req.user?.name || 'Sanctioning Officer (Demo)',
+        actor_role: req.user?.role || 'AICTE_OFFICER',
+        rationale,
+        previous_state: prevStatus,
+        new_state: seedCase.status,
+        event_timestamp: new Date().toISOString(),
+        metadata: {
+          decision,
+          rationale,
+          is_demo_action: Boolean(req.user?.is_demo)
+        }
+      });
     } else if (decision === 'REJECT') {
+      const prevStatus = seedCase.status;
       seedCase.status = 'REJECTED';
+      seedCase.audit_events = seedCase.audit_events || [];
+      seedCase.audit_events.push({
+        id: seedCase.audit_events.length + 1,
+        case_id: caseId,
+        action: `OFFICER_DECISION_${decision}`,
+        actor: req.user?.name || 'Sanctioning Officer (Demo)',
+        actor_role: req.user?.role || 'AICTE_OFFICER',
+        rationale,
+        previous_state: prevStatus,
+        new_state: seedCase.status,
+        event_timestamp: new Date().toISOString(),
+        metadata: { decision, rationale, is_demo_action: Boolean(req.user?.is_demo) }
+      });
     }
 
     return res.status(200).json({
       success: true,
       source: 'SEEDED_FALLBACK',
+      persistence_status: 'EPHEMERAL_DEMO_MEMORY',
       message: `Case ${caseId} decision recorded: ${decision}`,
       new_status: seedCase.status
     });
@@ -839,6 +1248,14 @@ router.get('/cases/:id/audit-trail', async (req, res) => {
       data: result.rows
     });
   } catch (err) {
+    if (process.env.STRICT_PERSISTENCE === 'true') {
+      return res.status(503).json({
+        success: false,
+        error: 'Database Service Unavailable: Failed to read audit trail under strict persistence mode.',
+        detail: err.message
+      });
+    }
+
     console.warn(`[KOSH-PRAMAAN] Audit query fallback (${err.message})`);
     const seedCase = SEED_CASES.find(sc => sc.id === caseId);
     if (!seedCase) {
@@ -860,12 +1277,17 @@ router.get('/cases/:id/audit-trail', async (req, res) => {
       }
     ];
 
+    const events = (seedCase.audit_events && seedCase.audit_events.length > 0)
+      ? seedCase.audit_events
+      : fallbackAudit;
+
     return res.status(200).json({
       success: true,
       source: 'SEEDED_FALLBACK',
+      persistence_status: 'EPHEMERAL_DEMO_MEMORY',
       case_id: caseId,
-      count: fallbackAudit.length,
-      data: fallbackAudit
+      count: events.length,
+      data: events
     });
   }
 });

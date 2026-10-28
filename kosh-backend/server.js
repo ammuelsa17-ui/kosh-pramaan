@@ -1,5 +1,6 @@
 import express from 'express';
 import healthRouter from './src/routes/health.routes.js';
+import authRouter from './src/routes/auth.routes.js';
 import casesRouter from './src/routes/cases.routes.js';
 
 const app = express();
@@ -35,6 +36,7 @@ app.use((req, res, next) => {
 
 // Mount API routes
 app.use('/api', healthRouter);
+app.use('/api', authRouter);
 app.use('/api', casesRouter);
 
 import { fileURLToPath } from 'node:url';
