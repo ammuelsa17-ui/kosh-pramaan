@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS case_documents (
 
 ALTER TABLE case_documents ADD COLUMN IF NOT EXISTS version INT NOT NULL DEFAULT 1;
 
--- 6. Audit Events (Immutable append-only chronological activity ledger with deletion protection)
+-- 6. Audit Events (Append-only relational chronological activity ledger with ON DELETE RESTRICT retention)
 CREATE TABLE IF NOT EXISTS audit_events (
   id SERIAL PRIMARY KEY,
   case_id VARCHAR(32) NOT NULL REFERENCES fdr_cases(id) ON DELETE RESTRICT,

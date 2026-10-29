@@ -409,4 +409,35 @@ test.describe('FDR Verification Logic, Security & Complete Lifecycle Audit', () 
     assert.equal(res.body.success, true);
     assert.ok(Array.isArray(res.body.data));
   });
+
+  test('14. Evidentiary Document SHA-256 Checksum Validation over raw file bytes', async () => {
+    const testDoc = Buffer.from('Official Sealed Fixed Deposit Certificate Bytes').toString('base64');
+    const uploadRes = await makeRequest({
+      method: 'POST',
+      url: '/api/cases/FDR-2026-001/documents',
+      headers: { 'authorization': `Bearer ${institutionToken}` },
+      body: {
+        document_name: 'Verified_Sealed_Certificate.pdf',
+        document_type: 'FDR_PHYSICAL_CERTIFICATE',
+        document_data: testDoc
+      }
+    });
+
+    assert.equal(uploadRes.statusCode, 201);
+    const docId = uploadRes.body.document.id;
+    assert.ok(docId);
+
+    // Call checksum verification endpoint
+    const verifyRes = await makeRequest({
+      method: 'GET',
+      url: `/api/cases/FDR-2026-001/documents/${docId}/verify`,
+      headers: { 'authorization': `Bearer ${institutionToken}` }
+    });
+
+    assert.equal(verifyRes.statusCode, 200);
+    assert.equal(verifyRes.body.success, true);
+    assert.equal(verifyRes.body.verified, true);
+    assert.equal(verifyRes.body.match, true);
+    assert.equal(verifyRes.body.calculated_hash, uploadRes.body.document.sha256_hash);
+  });
 });

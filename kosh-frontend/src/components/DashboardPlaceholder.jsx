@@ -71,7 +71,7 @@ export default function DashboardPlaceholder({ activeTab, setActiveTab, onNaviga
         <div className="card-header">
           <div>
             <div className="card-title">Dual-Column Simulated Verification</div>
-            <div className="card-subtitle">Transparent Reconciliation &bull; Explicit Simulation Disclaimer</div>
+            <div className="card-subtitle">Transparent Simulated FDR Comparison &bull; Explicit Simulation Disclaimer</div>
           </div>
           <span className="live-pill" style={{ background: '#fef3c7', color: '#b45309' }}>
             SIMULATED — NOT LIVE BANK VERIFICATION
@@ -109,7 +109,7 @@ export default function DashboardPlaceholder({ activeTab, setActiveTab, onNaviga
         <div className="card-header">
           <div>
             <div className="card-title">Clearance Workflow &amp; Blocker Tracker</div>
-            <div className="card-subtitle">Inter-Departmental Hand-offs &bull; Immutable Blocker Logging</div>
+            <div className="card-subtitle">Inter-Departmental Hand-offs &bull; Relational Blocker Logging</div>
           </div>
           <CheckSquare size={20} color="#1e3a5f" />
         </div>
@@ -145,7 +145,7 @@ export default function DashboardPlaceholder({ activeTab, setActiveTab, onNaviga
         <div className="card-header">
           <div>
             <div className="card-title">Audit Replay &amp; Traceability Timeline</div>
-            <div className="card-subtitle">Immutable Relational Activity Ledger &bull; Complete Chain of Custody</div>
+            <div className="card-subtitle">Append-Only Relational Activity Ledger &bull; Server-Enforced Retention</div>
           </div>
           <Clock size={20} color="#1e3a5f" />
         </div>
@@ -312,7 +312,7 @@ export default function DashboardPlaceholder({ activeTab, setActiveTab, onNaviga
               </div>
               <div className="scenario-title">Clean Review &amp; Full Approval</div>
               <div className="scenario-desc">
-                State Bank of India ₹50,00,000. Clean reconciliation. Once all clearances are completed, the Decision Gate allows case approval.
+                State Bank of India ₹50,00,000. Clean simulated comparison. Once all clearances are completed, the Decision Gate allows case approval.
               </div>
             </div>
             <button className="scenario-btn" onClick={(e) => { e.stopPropagation(); navigateTo('ALL', 'FDR-2026-001'); }}>
@@ -382,7 +382,7 @@ export default function DashboardPlaceholder({ activeTab, setActiveTab, onNaviga
         <div className="card-header">
           <div>
             <div className="card-title">Recent Administrative Activity Feed</div>
-            <div className="card-subtitle">Real-time audit events dispatched to PostgreSQL with tamper-evident chain of custody</div>
+            <div className="card-subtitle">Real-time audit events dispatched to PostgreSQL with strict relational retention</div>
           </div>
           <History size={20} color="#1e3a5f" />
         </div>
@@ -505,7 +505,7 @@ export default function DashboardPlaceholder({ activeTab, setActiveTab, onNaviga
               <strong>3. Backend Decision Gate:</strong> Server-side logic blocks approvals if clearances or objections are unresolved.
             </div>
             <div>
-              <strong>4. Immutable Audit Trail:</strong> Chronological actions, actors, and justification rationale stored in PostgreSQL.
+              <strong>4. Relational Audit Trail:</strong> Append-only chronological actions, authenticated actors, and justification rationale stored in PostgreSQL with ON DELETE RESTRICT retention.
             </div>
             <div>
               <strong>5. Lifecycle Distinction:</strong> In-app surveillance and alerts implemented; external multi-channel notifications planned.

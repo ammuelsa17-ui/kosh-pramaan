@@ -111,7 +111,7 @@ export default function SubmitFdrModal({ onClose, onCaseSubmitted }) {
               Assigned Case ID: <strong>{successCase.id}</strong> &bull; Department Queue: <strong>{successCase.department_queue}</strong>
             </p>
             <p style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '1rem' }}>
-              Initialized 3 mandatory clearance checkpoints (Accounts, Legal, Technical) and logged in immutable audit ledger.
+              Initialized 3 mandatory clearance checkpoints (Accounts, Legal, Technical) and logged in append-only relational audit ledger.
             </p>
             <button className="btn-primary" onClick={onClose} style={{ margin: '0 auto' }}>
               <span>Done &amp; View in Inventory</span>

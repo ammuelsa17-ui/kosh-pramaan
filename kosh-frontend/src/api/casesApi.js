@@ -367,6 +367,25 @@ export async function fetchCaseDocuments(caseId) {
 }
 
 /**
+ * Verify document checksum against stored raw file bytes on the server.
+ */
+export async function verifyDocumentChecksum(caseId, docId) {
+  try {
+    const res = await fetch(`${BACKEND_BASE_URL}/api/cases/${encodeURIComponent(caseId)}/documents/${encodeURIComponent(docId)}/verify`, {
+      method: 'GET',
+      headers: getHeaders()
+    });
+    const payload = await res.json();
+    if (!res.ok) {
+      return { ok: false, error: payload.error || `HTTP ${res.status}` };
+    }
+    return { ok: true, ...payload };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Checksum validation failed' };
+  }
+}
+
+/**
  * Fetch renewal history for an FDR case.
  */
 export async function fetchCaseRenewals(caseId) {

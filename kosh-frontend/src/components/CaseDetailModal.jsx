@@ -25,6 +25,7 @@ import {
   fetchAuditTrail,
   fetchCaseDetail,
   resolveObjection,
+  verifyDocumentChecksum,
   getActiveUser
 } from '../api/casesApi';
 
@@ -58,6 +59,20 @@ export default function CaseDetailModal({ caseItem: initialCase, onClose, onCase
   // Audit trail state
   const [auditEvents, setAuditEvents] = useState([]);
   const [loadingAudit, setLoadingAudit] = useState(false);
+
+  // Document checksum validation states
+  const [checksumResults, setChecksumResults] = useState({});
+  const [validatingChecksumId, setValidatingChecksumId] = useState(null);
+
+  const handleValidateChecksum = async (docId) => {
+    setValidatingChecksumId(docId);
+    const res = await verifyDocumentChecksum(caseItem.id, docId);
+    setChecksumResults(prev => ({
+      ...prev,
+      [docId]: res
+    }));
+    setValidatingChecksumId(null);
+  };
 
   // Reload case detail
   const refreshCurrentCase = async () => {
@@ -123,7 +138,7 @@ export default function CaseDetailModal({ caseItem: initialCase, onClose, onCase
     setTaskUpdating(null);
 
     if (res.ok) {
-      setTaskMsg({ type: 'success', text: `Task ${taskId} status updated to ${newStatus}. Recorded in immutable audit log.` });
+      setTaskMsg({ type: 'success', text: `Task ${taskId} status updated to ${newStatus}. Recorded in append-only audit ledger.` });
       setTaskRemarks((prev) => ({ ...prev, [taskId]: '' }));
       await refreshCurrentCase();
       if (activeTab === 'audit') loadAudit();
@@ -278,7 +293,7 @@ export default function CaseDetailModal({ caseItem: initialCase, onClose, onCase
               </div>
 
               <div className="section-header-bar">
-                <h3 className="section-heading">Dual-Column Reconciliation Record</h3>
+                <h3 className="section-heading">Dual-Column Simulated FDR Comparison Record</h3>
                 <button
                   className="btn-primary"
                   onClick={handleSimulateVerify}
@@ -711,10 +726,10 @@ export default function CaseDetailModal({ caseItem: initialCase, onClose, onCase
                 </div>
 
                 <div style={{ padding: '0.75rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-                  {/* Item 1: Core Banking Verification */}
+                  {/* Item 1: Simulated FDR Comparison */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.825rem' }}>
                     <div>
-                      <strong style={{ color: '#0f172a' }}>1. Core Banking Reconciliation:</strong>
+                      <strong style={{ color: '#0f172a' }}>1. Simulated FDR Comparison:</strong>
                       <div style={{ color: '#64748b', fontSize: '0.75rem' }}>
                         {!sim
                           ? 'Simulation not executed yet — Required prior to approval.'
@@ -872,7 +887,7 @@ export default function CaseDetailModal({ caseItem: initialCase, onClose, onCase
                   <textarea
                     rows={3}
                     className="rationale-input"
-                    placeholder="Enter formal justification rationale required for the immutable audit log..."
+                    placeholder="Enter formal justification rationale required for the append-only relational audit log..."
                     value={rationale}
                     onChange={(e) => setRationale(e.target.value)}
                     required
@@ -899,7 +914,7 @@ export default function CaseDetailModal({ caseItem: initialCase, onClose, onCase
                 <div>
                   <h3 className="section-heading">Evidentiary Document Repository &amp; Versions</h3>
                   <p className="section-subtext">
-                    Multi-version physical certificate records with cryptographic SHA-256 integrity verification.
+                    Multi-version physical certificate records with SHA-256 checksum verification over stored file bytes.
                   </p>
                 </div>
               </div>
@@ -916,10 +931,28 @@ export default function CaseDetailModal({ caseItem: initialCase, onClose, onCase
                             Version v{doc.version || 1}
                           </span>
                         </div>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', background: '#dcfce7', color: '#15803d', fontSize: '0.75rem', fontWeight: 600, padding: '0.15rem 0.5rem', borderRadius: '4px' }}>
-                          <ShieldCheck size={13} />
-                          Integrity Verified
-                        </span>
+                        {checksumResults[doc.id]?.verified && checksumResults[doc.id]?.match ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', background: '#dcfce7', color: '#15803d', fontSize: '0.75rem', fontWeight: 600, padding: '0.15rem 0.5rem', borderRadius: '4px' }}>
+                            <ShieldCheck size={13} />
+                            Checksum Validated
+                          </span>
+                        ) : checksumResults[doc.id]?.reason === 'NO_RAW_BYTES' ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', background: '#fef3c7', color: '#92400e', fontSize: '0.75rem', fontWeight: 600, padding: '0.15rem 0.5rem', borderRadius: '4px' }}>
+                            <AlertTriangle size={13} />
+                            Raw Bytes Not Cached
+                          </span>
+                        ) : (
+                          <button
+                            className="btn-secondary"
+                            style={{ padding: '0.2rem 0.6rem', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                            onClick={() => handleValidateChecksum(doc.id)}
+                            disabled={validatingChecksumId === doc.id}
+                            title="Hash raw file bytes on server and compare against registered checksum"
+                          >
+                            <RefreshCw size={12} className={validatingChecksumId === doc.id ? 'spin' : ''} />
+                            <span>{validatingChecksumId === doc.id ? 'Validating...' : 'Validate Checksum'}</span>
+                          </button>
+                        )}
                       </div>
                       <div style={{ fontSize: '0.8rem', color: '#475569', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.5rem', marginTop: '0.25rem' }}>
                         <div><strong>Type:</strong> <code>{doc.document_type || 'FDR_CERTIFICATE'}</code></div>
@@ -930,6 +963,11 @@ export default function CaseDetailModal({ caseItem: initialCase, onClose, onCase
                       <div style={{ marginTop: '0.35rem', background: '#f8fafc', padding: '0.5rem', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '0.75rem', color: '#334155', fontFamily: 'monospace', wordBreak: 'break-all' }}>
                         <strong>SHA-256:</strong> {doc.sha256_hash || 'SHA256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'}
                       </div>
+                      {checksumResults[doc.id]?.verified && checksumResults[doc.id]?.match && (
+                        <div style={{ fontSize: '0.72rem', color: '#15803d', fontStyle: 'italic', marginTop: '0.15rem' }}>
+                          &check; SHA-256 recomputed over {checksumResults[doc.id].bytes_checked || doc.file_size_bytes || 'payload'} bytes matched stored digest exactly.
+                        </div>
+                      )}
                     </div>
                   ))
                 ) : (
@@ -942,13 +980,13 @@ export default function CaseDetailModal({ caseItem: initialCase, onClose, onCase
                           Version v1
                         </span>
                       </div>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', background: '#dcfce7', color: '#15803d', fontSize: '0.75rem', fontWeight: 600, padding: '0.15rem 0.5rem', borderRadius: '4px' }}>
-                        <ShieldCheck size={13} />
-                        Intake Retained
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', background: '#f1f5f9', color: '#475569', fontSize: '0.75rem', fontWeight: 500, padding: '0.15rem 0.5rem', borderRadius: '4px' }}>
+                        <FileText size={13} />
+                        Intake Retained — Hash Stored
                       </span>
                     </div>
                     <div style={{ fontSize: '0.8rem', color: '#475569', marginTop: '0.25rem' }}>
-                      Physical FDR certificate deposited at application intake. Cryptographic SHA-256 seal assigned at registration.
+                      Physical FDR certificate deposited at application intake. SHA-256 seal registered in case metadata; upload additional evidentiary documents to execute live byte-level checksum validation.
                     </div>
                   </div>
                 )}
@@ -1010,7 +1048,7 @@ export default function CaseDetailModal({ caseItem: initialCase, onClose, onCase
 
               {/* Distinction between implemented and planned */}
               <div style={{ marginTop: '1.25rem', padding: '0.75rem 1rem', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', fontSize: '0.75rem', color: '#64748b' }}>
-                <strong>Lifecycle Roadmap Note:</strong> Implemented: In-App Renewals &amp; Replacement Registry with cryptographic integrity. Planned: 5-Stage Automated External Dispatcher (SMS &amp; Email alerts to institution nodal officers).
+                <strong>Lifecycle Roadmap Note:</strong> Implemented: In-App Renewals &amp; Replacement Registry with relational database retention. Planned: 5-Stage Automated External Dispatcher (SMS &amp; Email alerts to institution nodal officers).
               </div>
             </div>
           )}
@@ -1022,7 +1060,7 @@ export default function CaseDetailModal({ caseItem: initialCase, onClose, onCase
                 <div>
                   <h3 className="section-heading">Chronological Audit Replay</h3>
                   <p className="section-subtext">
-                    Immutable event ledger recording actor, action, timestamp, and justification rationale.
+                    Append-only relational event ledger recording actor, action, timestamp, and mandatory justification rationale.
                   </p>
                 </div>
                 <button className="btn-secondary" onClick={loadAudit} disabled={loadingAudit}>

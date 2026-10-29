@@ -52,7 +52,7 @@ export const DEMO_USERS = [
     name: 'CAG / Vigilance Oversight Team',
     role: ROLES.AUDITOR,
     department: 'Chief Vigilance Commission (CVC) Audit Wing',
-    description: 'Read-only audit inspector: Complete access to immutable chronological audit logs and case files.'
+    description: 'Read-only audit inspector: Complete access to append-only chronological audit logs and case files.'
   }
 ];
 
