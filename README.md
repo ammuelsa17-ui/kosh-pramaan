@@ -13,7 +13,7 @@ Comprehensive, tamper-evident FDR verification, multi-queue statutory clearance 
 * **Database:** PostgreSQL (`pg` 8.13.3) with parameterized queries, connection pooling, and row-level locking (`SELECT ... FOR UPDATE`).
 * **Security & RBAC:** Cryptographic HMAC-SHA256 JWT tokens with role-based guards (`INSTITUTION`, `VERIFICATION_OFFICER`, `CLEARANCE_OFFICER`, `AICTE_OFFICER`, `AUDITOR`) and strict record-level institution tenant data isolation.
 * **Concurrency Safety:** PostgreSQL atomic sequence `fdr_case_seq` generating non-colliding Case IDs (`FDR-2026-XXXX`).
-* **Audit Integrity:** Append-only chronological event ledger protected by PostgreSQL `ON DELETE RESTRICT`.
+* **Audit Integrity:** Append-only chronological event ledger in PostgreSQL protected by foreign key `ON DELETE RESTRICT`. (Note: Cryptographic SHA-256 checksums are implemented for evidentiary document files in `case_documents`; relational audit events rely on server-enforced chronological ledger immutability and relational constraints rather than hash-chaining).
 
 ---
 
