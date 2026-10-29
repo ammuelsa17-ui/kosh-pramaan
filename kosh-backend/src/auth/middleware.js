@@ -8,9 +8,12 @@ export function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
   let token = null;
 
+  const isProd = process.env.NODE_ENV === 'production';
+  const demoAllowed = !isProd || process.env.ENABLE_DEMO_AUTH === 'true';
+
   if (authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.slice(7).trim();
-  } else if (req.headers['x-demo-role']) {
+  } else if (demoAllowed && req.headers['x-demo-role']) {
     const requestedRole = req.headers['x-demo-role'];
     const demoUser = DEMO_USERS.find(u => u.role === requestedRole);
     if (demoUser) {
@@ -19,7 +22,9 @@ export function authenticate(req, res, next) {
         name: demoUser.name,
         role: demoUser.role,
         department: demoUser.department,
-        institution_id: demoUser.institution_id || null
+        institution_id: demoUser.institution_id || null,
+        is_demo: true,
+        simulated: true
       });
     }
   }
@@ -51,13 +56,16 @@ export function authenticate(req, res, next) {
  */
 export function optionalAuth(req, res, next) {
   const authHeader = req.headers.authorization;
+  const isProd = process.env.NODE_ENV === 'production';
+  const demoAllowed = !isProd || process.env.ENABLE_DEMO_AUTH === 'true';
+
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.slice(7).trim();
     const result = verifyToken(token);
     if (result.valid) {
       req.user = result.payload;
     }
-  } else if (req.headers['x-demo-role']) {
+  } else if (demoAllowed && req.headers['x-demo-role']) {
     const requestedRole = req.headers['x-demo-role'];
     const demoUser = DEMO_USERS.find(u => u.role === requestedRole);
     if (demoUser) {

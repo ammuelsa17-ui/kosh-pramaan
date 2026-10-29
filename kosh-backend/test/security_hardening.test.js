@@ -131,6 +131,36 @@ test.describe('Security & Reliability Pre-Deployment Hardening Audit', () => {
     assert.equal(decoded.payload.simulation_notice, 'SIMULATED DEMO CREDENTIAL - NOT FOR PRODUCTION COMPLIANCE');
   });
 
+  test('3B. Demo Header Isolation: Rejects x-demo-role header in production when ENABLE_DEMO_AUTH is false', async () => {
+    const originalEnv = process.env.NODE_ENV;
+    const originalDemo = process.env.ENABLE_DEMO_AUTH;
+    const originalSecret = process.env.JWT_SECRET;
+
+    try {
+      process.env.NODE_ENV = 'production';
+      process.env.JWT_SECRET = 's3cur3-k0sh-pr4m44n-pr0duct10n-k3y-99824!';
+      delete process.env.ENABLE_DEMO_AUTH;
+
+      // Request with x-demo-role header but without Bearer token
+      const res = await makeRequest({
+        method: 'GET',
+        url: '/api/cases',
+        headers: { 'x-demo-role': ROLES.AICTE_OFFICER }
+      });
+
+      // Must be rejected with HTTP 401 Authentication Required
+      assert.equal(res.statusCode, 401, 'x-demo-role header must NOT bypass authentication in production without ENABLE_DEMO_AUTH=true');
+      assert.equal(res.body.success, false);
+      assert.match(res.body.error, /Authentication Required/i);
+    } finally {
+      process.env.NODE_ENV = originalEnv;
+      if (originalDemo !== undefined) process.env.ENABLE_DEMO_AUTH = originalDemo;
+      else delete process.env.ENABLE_DEMO_AUTH;
+      if (originalSecret !== undefined) process.env.JWT_SECRET = originalSecret;
+      else delete process.env.JWT_SECRET;
+    }
+  });
+
   test('4. PostgreSQL SSL Configuration: Enforces rejectUnauthorized=true by default', async () => {
     const originalUrl = process.env.DATABASE_URL;
     const originalSelfSigned = process.env.PG_SSL_ALLOW_SELF_SIGNED;

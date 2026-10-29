@@ -1,6 +1,6 @@
-const BACKEND_BASE_URL = typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL !== undefined
-  ? import.meta.env.VITE_API_URL
-  : (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.PROD ? '' : 'http://localhost:5001');
+const BACKEND_BASE_URL = typeof import.meta !== 'undefined' && import.meta.env
+  ? (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:5001'))
+  : 'http://localhost:5001';
 
 // Local in-memory / session storage for active authenticated user
 let activeToken = typeof window !== 'undefined' ? (window.sessionStorage.getItem('kosh_auth_token') || null) : null;
@@ -325,5 +325,85 @@ export async function resolveObjection(caseId, objId, { status = 'RESOLVED', res
     return { ok: true, data: payload };
   } catch (err) {
     return { ok: false, error: err.message || 'Objection resolution request failed' };
+  }
+}
+
+/**
+ * Fetch maturity alerts (upcoming, critical, expired FDRs).
+ */
+export async function fetchMaturityAlerts(daysAhead = 90) {
+  try {
+    const res = await fetch(`${BACKEND_BASE_URL}/api/cases/alerts/maturity?days_ahead=${daysAhead}`, {
+      method: 'GET',
+      headers: getHeaders()
+    });
+    const payload = await res.json();
+    if (!res.ok) {
+      return { ok: false, error: payload.error || `HTTP ${res.status}` };
+    }
+    return { ok: true, summary: payload.summary, alerts: payload.data || [] };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Failed to fetch maturity alerts', alerts: [] };
+  }
+}
+
+/**
+ * Fetch document versions and cryptographic checksums for a case.
+ */
+export async function fetchCaseDocuments(caseId) {
+  try {
+    const res = await fetch(`${BACKEND_BASE_URL}/api/cases/${encodeURIComponent(caseId)}/documents`, {
+      method: 'GET',
+      headers: getHeaders()
+    });
+    const payload = await res.json();
+    if (!res.ok) {
+      return { ok: false, error: payload.error || `HTTP ${res.status}` };
+    }
+    return { ok: true, data: payload.data || [] };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Failed to fetch documents', data: [] };
+  }
+}
+
+/**
+ * Fetch renewal history for an FDR case.
+ */
+export async function fetchCaseRenewals(caseId) {
+  try {
+    const res = await fetch(`${BACKEND_BASE_URL}/api/cases/${encodeURIComponent(caseId)}/renewals`, {
+      method: 'GET',
+      headers: getHeaders()
+    });
+    const payload = await res.json();
+    if (!res.ok) {
+      return { ok: false, error: payload.error || `HTTP ${res.status}` };
+    }
+    return { ok: true, data: payload.data || [] };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Failed to fetch renewals', data: [] };
+  }
+}
+
+/**
+ * Submit an FDR renewal or replacement.
+ */
+export async function renewFdrCase(caseId, renewalData) {
+  try {
+    const res = await fetch(`${BACKEND_BASE_URL}/api/cases/${encodeURIComponent(caseId)}/renew`, {
+      method: 'POST',
+      headers: getHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(renewalData)
+    });
+    const payload = await res.json();
+    if (res.status === 403) {
+      return { ok: false, isForbidden: true, error: payload.message || 'Access Denied: Insufficient role permissions.' };
+    }
+    if (!res.ok) {
+      return { ok: false, error: payload.error || `HTTP ${res.status}` };
+    }
+    return { ok: true, data: payload };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Renewal request failed' };
   }
 }

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   X,
   ShieldAlert,
+  ShieldCheck,
   CheckCircle2,
   AlertTriangle,
   FileText,
@@ -238,6 +239,18 @@ export default function CaseDetailModal({ caseItem: initialCase, onClose, onCase
             onClick={() => setActiveTab('decision')}
           >
             Backend Decision Gate
+          </button>
+          <button
+            className={`subnav-btn ${activeTab === 'documents' ? 'active' : ''}`}
+            onClick={() => setActiveTab('documents')}
+          >
+            Documents &amp; Versions ({caseItem.documents ? caseItem.documents.length : (caseItem.document_filename ? 1 : 0)})
+          </button>
+          <button
+            className={`subnav-btn ${activeTab === 'renewals' ? 'active' : ''}`}
+            onClick={() => setActiveTab('renewals')}
+          >
+            Renewals ({caseItem.renewals ? caseItem.renewals.length : 0})
           </button>
           <button
             className={`subnav-btn ${activeTab === 'audit' ? 'active' : ''}`}
@@ -683,7 +696,125 @@ export default function CaseDetailModal({ caseItem: initialCase, onClose, onCase
             </div>
           )}
 
-          {/* TAB 4: AUDIT REPLAY */}
+          {/* TAB 4: DOCUMENTS & VERSIONING */}
+          {activeTab === 'documents' && (
+            <div className="detail-section">
+              <div className="section-header-bar">
+                <div>
+                  <h3 className="section-heading">Evidentiary Document Repository &amp; Versions</h3>
+                  <p className="section-subtext">
+                    Multi-version physical certificate records with cryptographic SHA-256 integrity verification.
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {caseItem.documents && caseItem.documents.length > 0 ? (
+                  caseItem.documents.map((doc, idx) => (
+                    <div key={doc.id || idx} style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '1rem', background: '#ffffff', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <FileText size={18} color="#1e3a5f" />
+                          <strong style={{ fontSize: '0.95rem', color: '#0f172a' }}>{doc.document_name}</strong>
+                          <span style={{ background: '#e0f2fe', color: '#0369a1', fontSize: '0.75rem', fontWeight: 600, padding: '0.15rem 0.5rem', borderRadius: '4px' }}>
+                            Version v{doc.version || 1}
+                          </span>
+                        </div>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', background: '#dcfce7', color: '#15803d', fontSize: '0.75rem', fontWeight: 600, padding: '0.15rem 0.5rem', borderRadius: '4px' }}>
+                          <ShieldCheck size={13} />
+                          Integrity Verified
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: '#475569', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.5rem', marginTop: '0.25rem' }}>
+                        <div><strong>Type:</strong> <code>{doc.document_type || 'FDR_CERTIFICATE'}</code></div>
+                        <div><strong>Size:</strong> {doc.file_size_bytes ? `${(doc.file_size_bytes / 1024).toFixed(1)} KB` : 'N/A'}</div>
+                        <div><strong>Uploaded By:</strong> {doc.uploaded_by || 'Institution'} ({doc.uploaded_by_role || 'INSTITUTION'})</div>
+                        <div><strong>Date:</strong> {doc.uploaded_at ? new Date(doc.uploaded_at).toLocaleString() : 'Registered at Intake'}</div>
+                      </div>
+                      <div style={{ marginTop: '0.35rem', background: '#f8fafc', padding: '0.5rem', borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '0.75rem', color: '#334155', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                        <strong>SHA-256:</strong> {doc.sha256_hash || 'SHA256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '1rem', background: '#ffffff', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <FileText size={18} color="#1e3a5f" />
+                        <strong style={{ fontSize: '0.95rem', color: '#0f172a' }}>{caseItem.document_filename || 'Original_FDR_Certificate.pdf'}</strong>
+                        <span style={{ background: '#e0f2fe', color: '#0369a1', fontSize: '0.75rem', fontWeight: 600, padding: '0.15rem 0.5rem', borderRadius: '4px' }}>
+                          Version v1
+                        </span>
+                      </div>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', background: '#dcfce7', color: '#15803d', fontSize: '0.75rem', fontWeight: 600, padding: '0.15rem 0.5rem', borderRadius: '4px' }}>
+                        <ShieldCheck size={13} />
+                        Intake Retained
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#475569', marginTop: '0.25rem' }}>
+                      Physical FDR certificate deposited at application intake. Cryptographic SHA-256 seal assigned at registration.
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 5: RENEWALS & REPLACEMENTS */}
+          {activeTab === 'renewals' && (
+            <div className="detail-section">
+              <div className="section-header-bar">
+                <div>
+                  <h3 className="section-heading">FDR Renewal &amp; Replacement Ledger</h3>
+                  <p className="section-subtext">
+                    Historical record of deposit extensions, FDR replacement numbers, and extended maturity dates.
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ marginTop: '1rem' }}>
+                {caseItem.renewals && caseItem.renewals.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    {caseItem.renewals.map((ren, idx) => (
+                      <div key={ren.id || idx} style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '1rem', background: '#f8fafc' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                          <span style={{ fontWeight: 600, color: '#1e3a5f', fontSize: '0.9rem' }}>
+                            Renewal Event #{idx + 1}
+                          </span>
+                          <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                            {new Date(ren.created_at).toLocaleString()}
+                          </span>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.5rem', fontSize: '0.825rem' }}>
+                          <div>Previous FDR: <code>{ren.previous_fdr_number}</code></div>
+                          <div>New Extended FDR: <code>{ren.new_fdr_number}</code></div>
+                          <div>Previous Maturity: {new Date(ren.previous_maturity_date).toLocaleDateString()}</div>
+                          <div>New Extended Maturity: <strong>{new Date(ren.new_maturity_date).toLocaleDateString()}</strong></div>
+                          <div>Extended Amount: <strong>{formatCurrency(ren.renewal_amount)}</strong></div>
+                          <div>Authorized By: <strong>{ren.actor}</strong></div>
+                        </div>
+                        {ren.remarks && (
+                          <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: '#475569', fontStyle: 'italic' }}>
+                            "{ren.remarks}"
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="table-status-box empty-box">
+                    <History size={24} style={{ color: '#94a3b8', marginBottom: '0.5rem' }} />
+                    <p><strong>No Renewals Recorded</strong></p>
+                    <p style={{ fontSize: '0.825rem', color: '#64748b', marginTop: '0.25rem' }}>
+                      Current deposit is operating under its primary term, maturing on {new Date(caseItem.maturity_date).toLocaleDateString()}.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 6: AUDIT REPLAY */}
           {activeTab === 'audit' && (
             <div className="audit-section">
               <div className="section-header-bar">

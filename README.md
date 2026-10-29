@@ -55,9 +55,11 @@ Comprehensive, tamper-evident FDR verification, multi-queue statutory clearance 
 | **Document Versioning & SHA-256 Hashes** | **IMPLEMENTED** | Cryptographic integrity verification for uploaded FDR certificates. |
 | **Maturity Monitoring & Alerts API** | **IMPLEMENTED** | Configurable lookahead queries categorizing critical & upcoming tenures. |
 | **FDR Renewal & Replacement Ledger** | **IMPLEMENTED** | Persistent historical log of deposit tenure extensions in `fdr_renewals`. |
-| **Live RBI / SFMS Core-Banking API Gateway** | **PLANNED** | Production integration requiring formal RBI / SFMS credentials and bank MOUs. |
+| **Real Bank CBS / SFMS Core-Banking API Gateway** | **PLANNED** | Production integration requiring formal bank MOUs and SFMS connectivity. |
+| **RBI Account Aggregator (AA) Integration** | **PLANNED** | Consent-driven automated bank deposit discovery framework. |
+| **NeSL Digital Document Execution (DDE)** | **PLANNED** | Digital stamp duty and e-lien marking with national information utility. |
 | **Automated Computer Vision Seal & Stamp OCR**| **PLANNED** | Automated visual detection of bank seals; currently handled via Accounts queue. |
-| **Automated SMS / Email Notification Daemon** | **PLANNED** | External gateway dispatch daemon; alerts currently surfaced via API and UI. |
+| **Automated 5-Stage Reminder Dispatcher (SMS/Email)** | **PLANNED** | Background cron dispatcher at 90, 60, 30, 15, 7 days; alerts surfaced via API and UI. |
 
 ---
 
@@ -72,7 +74,7 @@ Comprehensive, tamper-evident FDR verification, multi-queue statutory clearance 
 cd kosh-backend
 npm install
 
-# Run the 64 automated backend unit, security, and lifecycle tests:
+# Run the 65 automated backend unit, security, and lifecycle tests:
 npm test
 
 # Start the backend server on http://localhost:5001:
@@ -108,4 +110,4 @@ npm run dev
 | `ENABLE_DEMO_AUTH` | Optional | `false` in prod (`true` in dev) | Enables demo role switcher profiles for evaluators. |
 | `STRICT_PERSISTENCE` | Optional | `false` | When `true`, database failures abort with HTTP 503 instead of read-only fallback. |
 | `PORT` | Optional | `5001` | Express backend HTTP port. |
-| `VITE_API_URL` | Optional | `http://localhost:5001` | Frontend API target URL. |
+| `VITE_API_URL` / `VITE_API_BASE_URL` | Optional | `http://localhost:5001` | Frontend API target URL (supports both variable names). |

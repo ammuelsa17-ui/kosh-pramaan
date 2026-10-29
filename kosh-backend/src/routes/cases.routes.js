@@ -628,11 +628,12 @@ router.get('/cases/:id', authenticate, async (req, res) => {
       }
     }
 
-    const [simResult, tasksResult, objResult, docsResult] = await Promise.all([
+    const [simResult, tasksResult, objResult, docsResult, renewalsResult] = await Promise.all([
       query(`SELECT * FROM simulated_bank_records WHERE case_id = $1`, [caseId]),
       query(`SELECT * FROM clearance_tasks WHERE case_id = $1 ORDER BY created_at ASC`, [caseId]),
       query(`SELECT * FROM objections WHERE case_id = $1 ORDER BY created_at ASC`, [caseId]),
-      query(`SELECT id, document_type, document_name, mime_type, file_size_bytes, sha256_hash, uploaded_by, uploaded_by_role, uploaded_at FROM case_documents WHERE case_id = $1 ORDER BY uploaded_at ASC`, [caseId])
+      query(`SELECT id, document_type, document_name, version, mime_type, file_size_bytes, sha256_hash, uploaded_by, uploaded_by_role, uploaded_at FROM case_documents WHERE case_id = $1 ORDER BY uploaded_at ASC`, [caseId]),
+      query(`SELECT id, case_id, previous_fdr_number, new_fdr_number, previous_maturity_date, new_maturity_date, renewal_amount, actor, remarks, created_at FROM fdr_renewals WHERE case_id = $1 ORDER BY created_at ASC`, [caseId])
     ]);
 
     return res.status(200).json({
@@ -643,7 +644,8 @@ router.get('/cases/:id', authenticate, async (req, res) => {
         simulated: simResult.rows[0] || null,
         tasks: tasksResult.rows,
         objections: objResult.rows,
-        documents: docsResult.rows
+        documents: docsResult.rows,
+        renewals: renewalsResult.rows
       }
     });
   } catch (err) {

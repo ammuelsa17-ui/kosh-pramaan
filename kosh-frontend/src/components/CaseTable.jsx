@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, RefreshCw, AlertTriangle, CheckCircle2, ShieldAlert, Eye, Database, Info, FileText, Clock, FilePlus } from 'lucide-react';
-import { fetchCases, fetchCaseDetail } from '../api/casesApi';
+import { Search, Filter, RefreshCw, AlertTriangle, CheckCircle2, ShieldAlert, Eye, Database, Info, FileText, Clock, FilePlus, BellRing } from 'lucide-react';
+import { fetchCases, fetchCaseDetail, fetchMaturityAlerts } from '../api/casesApi';
 import CaseDetailModal from './CaseDetailModal';
 import SubmitFdrModal from './SubmitFdrModal';
 
@@ -11,6 +11,7 @@ export default function CaseTable() {
   const [dataSource, setDataSource] = useState(null);
   const [dbError, setDbError] = useState(null);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const [maturityAlerts, setMaturityAlerts] = useState([]);
 
   // Filters & Search
   const [searchTerm, setSearchTerm] = useState('');
@@ -23,13 +24,19 @@ export default function CaseTable() {
   const loadCases = async () => {
     setLoading(true);
     setError(null);
-    const result = await fetchCases();
+    const [result, alertsRes] = await Promise.all([
+      fetchCases(),
+      fetchMaturityAlerts(90)
+    ]);
     if (result.ok) {
       setCases(result.data);
       setDataSource(result.source);
       setDbError(result.dbError);
     } else {
       setError(result.error);
+    }
+    if (alertsRes && alertsRes.ok) {
+      setMaturityAlerts(alertsRes.alerts || []);
     }
     setLoading(false);
   };
@@ -103,6 +110,43 @@ export default function CaseTable() {
             </div>
           </div>
           <span className="live-pill">Live Relational Data</span>
+        </div>
+      )}
+
+      {/* Maturity Surveillance Banner */}
+      {maturityAlerts && maturityAlerts.length > 0 && (
+        <div className="source-banner" style={{ background: '#fffbeb', borderColor: '#fde68a', color: '#92400e', marginBottom: '1.25rem' }}>
+          <div className="banner-content">
+            <BellRing size={18} color="#d97706" />
+            <div>
+              <strong>FDR Maturity Surveillance: {maturityAlerts.length} Deposit(s) Expiring Within 90 Days</strong>
+              <div className="banner-subtext" style={{ color: '#b45309' }}>
+                {maturityAlerts.filter(a => a.alert_level === 'CRITICAL' || a.alert_level === 'EXPIRED').length > 0
+                  ? `Critical Attention: ${maturityAlerts.filter(a => a.alert_level === 'CRITICAL' || a.alert_level === 'EXPIRED').length} deposit(s) expired or expiring within 15 days require renewal.`
+                  : 'All identified deposits are tracked in the multi-stage surveillance window.'}
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            {maturityAlerts.map(a => (
+              <span
+                key={a.id}
+                style={{
+                  background: a.alert_level === 'EXPIRED' ? '#fee2e2' : (a.alert_level === 'CRITICAL' ? '#fef3c7' : '#f1f5f9'),
+                  color: a.alert_level === 'EXPIRED' ? '#b91c1c' : (a.alert_level === 'CRITICAL' ? '#92400e' : '#475569'),
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  padding: '0.2rem 0.5rem',
+                  borderRadius: '4px',
+                  cursor: 'pointer'
+                }}
+                onClick={() => handleOpenDetail(a.id)}
+                title={`Click to view case ${a.id} (Maturing in ${a.days_to_maturity} days)`}
+              >
+                {a.fdr_number} ({a.days_to_maturity < 0 ? 'EXPIRED' : `${a.days_to_maturity}d`})
+              </span>
+            ))}
+          </div>
         </div>
       )}
 

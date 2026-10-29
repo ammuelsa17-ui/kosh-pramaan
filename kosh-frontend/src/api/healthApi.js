@@ -1,6 +1,6 @@
-const BACKEND_BASE_URL = typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL !== undefined
-  ? import.meta.env.VITE_API_URL
-  : (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.PROD ? '' : 'http://localhost:5001');
+const BACKEND_BASE_URL = typeof import.meta !== 'undefined' && import.meta.env
+  ? (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:5001'))
+  : 'http://localhost:5001';
 
 /**
  * Fetch health status from backend REST endpoint.
