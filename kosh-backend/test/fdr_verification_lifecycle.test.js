@@ -440,4 +440,68 @@ test.describe('FDR Verification Logic, Security & Complete Lifecycle Audit', () 
     assert.equal(verifyRes.body.match, true);
     assert.equal(verifyRes.body.calculated_hash, uploadRes.body.document.sha256_hash);
   });
+
+  test('15. Forbidden State Transitions: Cannot approve an already REFUNDED, RELEASE_SANCTIONED, or REJECTED case (HTTP 422)', async () => {
+    // 1. Set an existing case to REFUNDED
+    const prevStatusRes = await pool.query('SELECT status FROM fdr_cases WHERE id = $1', ['FDR-2026-004']);
+    const prevStatus = prevStatusRes.rows.length > 0 ? prevStatusRes.rows[0].status : 'RELEASE_REQUESTED';
+
+    await pool.query('UPDATE fdr_cases SET status = $1 WHERE id = $2', ['REFUNDED', 'FDR-2026-004']);
+
+    try {
+      const approveRes = await makeRequest({
+        method: 'POST',
+        url: '/api/cases/FDR-2026-004/decision',
+        headers: { 'authorization': `Bearer ${aicteDirectorToken}` },
+        body: { decision: 'APPROVE', rationale: 'Attempting approval on refunded case' }
+      });
+
+      assert.equal(approveRes.statusCode, 422, 'Must reject approval on terminal status with HTTP 422');
+      assert.match(approveRes.body.error, /Forbidden State Transition/i);
+      assert.equal(approveRes.body.current_status, 'REFUNDED');
+    } finally {
+      await pool.query('UPDATE fdr_cases SET status = $1 WHERE id = $2', [prevStatus, 'FDR-2026-004']);
+    }
+  });
+
+  test('16. Institution Isolation: Strict institution_id authorization prevents cross-tenant access even with duplicate institution names', async () => {
+    // Attacker or separate entity having the exact same name but different institution_id
+    const duplicateNameToken = signToken({
+      id: 'USR-INST-DIFF',
+      username: 'apex_duplicate',
+      name: 'Apex Infrastructure Projects Ltd', // Same name as FDR-2026-001!
+      role: ROLES.INSTITUTION,
+      institution_id: 'AICTE-DIFF-88888', // Different stable institution ID!
+      department: 'Institutional Administration'
+    });
+
+    // 1. GET /api/cases must NOT return FDR-2026-001 (which belongs to AICTE-1-492019482)
+    const listRes = await makeRequest({
+      method: 'GET',
+      url: '/api/cases',
+      headers: { 'authorization': `Bearer ${duplicateNameToken}` }
+    });
+    assert.equal(listRes.statusCode, 200);
+    const leaked = listRes.body.data.some(c => c.id === 'FDR-2026-001' || c.institution_id === 'AICTE-1-492019482');
+    assert.equal(leaked, false, 'Cases from another institution ID must never be exposed even if name matches');
+
+    // 2. Direct GET /api/cases/FDR-2026-001 must return HTTP 403 Forbidden
+    const detailRes = await makeRequest({
+      method: 'GET',
+      url: '/api/cases/FDR-2026-001',
+      headers: { 'authorization': `Bearer ${duplicateNameToken}` }
+    });
+    assert.equal(detailRes.statusCode, 403, 'Cross-tenant access by ID mismatch must be rejected with HTTP 403');
+    assert.match(detailRes.body.error, /Access Denied/i);
+
+    // 3. GET /api/cases/audit/recent must not return audit events for AICTE-1-492019482
+    const auditRes = await makeRequest({
+      method: 'GET',
+      url: '/api/cases/audit/recent',
+      headers: { 'authorization': `Bearer ${duplicateNameToken}` }
+    });
+    assert.equal(auditRes.statusCode, 200);
+    const leakedAudit = auditRes.body.data.some(a => a.case_id === 'FDR-2026-001');
+    assert.equal(leakedAudit, false, 'Audit records from another institution ID must not be leaked');
+  });
 });

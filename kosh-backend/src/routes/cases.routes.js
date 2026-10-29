@@ -82,8 +82,13 @@ router.get('/cases', authenticate, async (req, res) => {
     const params = [];
 
     if (isInstitution) {
-      sql += ` WHERE (c.institution_id = $1 OR LOWER(c.institution_name) = LOWER($2))`;
-      params.push(userInstId, userInstName);
+      if (userInstId) {
+        sql += ` WHERE c.institution_id = $1`;
+        params.push(userInstId);
+      } else {
+        sql += ` WHERE LOWER(c.institution_name) = LOWER($1)`;
+        params.push(userInstName);
+      }
     }
 
     sql += ` ORDER BY c.created_at ASC`;
@@ -105,10 +110,13 @@ router.get('/cases', authenticate, async (req, res) => {
     
     let filteredCases = SEED_CASES;
     if (isInstitution) {
-      filteredCases = SEED_CASES.filter(c => 
-        (c.institution_id && c.institution_id === userInstId) ||
-        (userInstName && c.institution_name && c.institution_name.toLowerCase() === userInstName.toLowerCase())
-      );
+      if (userInstId) {
+        filteredCases = SEED_CASES.filter(c => c.institution_id === userInstId);
+      } else {
+        filteredCases = SEED_CASES.filter(c => 
+          userInstName && c.institution_name && c.institution_name.toLowerCase() === userInstName.toLowerCase()
+        );
+      }
     }
 
     const fallbackData = filteredCases.map(c => ({
@@ -617,9 +625,14 @@ router.get('/cases/audit/recent', authenticate, async (req, res) => {
     const params = [];
 
     if (isInstitution) {
-      sql += ` WHERE (c.institution_id = $1 OR LOWER(c.institution_name) = LOWER($2))`;
-      params.push(userInstId, userInstName);
-      sql += ` ORDER BY a.event_timestamp DESC, a.id DESC LIMIT $3`;
+      if (userInstId) {
+        sql += ` WHERE c.institution_id = $1`;
+        params.push(userInstId);
+      } else {
+        sql += ` WHERE LOWER(c.institution_name) = LOWER($1)`;
+        params.push(userInstName);
+      }
+      sql += ` ORDER BY a.event_timestamp DESC, a.id DESC LIMIT $2`;
       params.push(limit);
     } else {
       sql += ` ORDER BY a.event_timestamp DESC, a.id DESC LIMIT $1`;
@@ -643,9 +656,8 @@ router.get('/cases/audit/recent', authenticate, async (req, res) => {
     const allEvents = [];
     SEED_CASES.forEach(c => {
       if (isInstitution) {
-        const matchId = c.institution_id && c.institution_id === userInstId;
-        const matchName = c.institution_name && userInstName && c.institution_name.toLowerCase() === userInstName.toLowerCase();
-        if (!matchId && !matchName) return;
+        const matchId = userInstId ? (c.institution_id === userInstId) : (userInstName && c.institution_name && c.institution_name.toLowerCase() === userInstName.toLowerCase());
+        if (!matchId) return;
       }
       if (Array.isArray(c.audit_events)) {
         c.audit_events.forEach(evt => {
@@ -692,17 +704,19 @@ router.get('/cases/:id', authenticate, async (req, res) => {
 
     const caseData = caseResult.rows[0];
 
-    // Record-level ownership enforcement for Institutions
+    // Record-level ownership enforcement for Institutions: Prefer stable institution_id
     if (isInstitution) {
       const matchInstId = caseData.institution_id && userInstId && caseData.institution_id === userInstId;
-      const matchInstName = caseData.institution_name && userInstName && (
-        caseData.institution_name.toLowerCase() === userInstName.toLowerCase()
-      );
-      if (!matchInstId && !matchInstName) {
-        return res.status(403).json({
-          success: false,
-          error: 'Access Denied: You are not authorized to view FDR records registered for another institution.'
-        });
+      if (!matchInstId) {
+        const allowNameFallback = !userInstId && caseData.institution_name && userInstName && (
+          caseData.institution_name.toLowerCase() === userInstName.toLowerCase()
+        );
+        if (!allowNameFallback) {
+          return res.status(403).json({
+            success: false,
+            error: 'Access Denied: You are not authorized to view FDR records registered for another institution.'
+          });
+        }
       }
     }
 
@@ -740,14 +754,16 @@ router.get('/cases/:id', authenticate, async (req, res) => {
 
     if (isInstitution) {
       const matchInstId = seedCase.institution_id && userInstId && seedCase.institution_id === userInstId;
-      const matchInstName = seedCase.institution_name && userInstName && (
-        seedCase.institution_name.toLowerCase() === userInstName.toLowerCase()
-      );
-      if (!matchInstId && !matchInstName) {
-        return res.status(403).json({
-          success: false,
-          error: 'Access Denied: You are not authorized to view FDR records registered for another institution.'
-        });
+      if (!matchInstId) {
+        const allowNameFallback = !userInstId && seedCase.institution_name && userInstName && (
+          seedCase.institution_name.toLowerCase() === userInstName.toLowerCase()
+        );
+        if (!allowNameFallback) {
+          return res.status(403).json({
+            success: false,
+            error: 'Access Denied: You are not authorized to view FDR records registered for another institution.'
+          });
+        }
       }
     }
 
@@ -1754,6 +1770,17 @@ router.post('/cases/:id/decision', authenticate, requireRole(ROLES.AICTE_OFFICER
 
       const c = caseResult.rows[0];
 
+      // Check 0: Terminal / Post-Release State Validation (Forbidden Transitions)
+      if (['REFUNDED', 'RELEASE_SANCTIONED', 'REJECTED'].includes(c.status)) {
+        await client.query('ROLLBACK');
+        return res.status(422).json({
+          success: false,
+          error: `Forbidden State Transition: Case "${caseId}" is in terminal/closed status "${c.status}". An already refunded, released, or rejected FDR deposit cannot be approved or modified.`,
+          current_status: c.status,
+          decision
+        });
+      }
+
       if (decision === 'APPROVE') {
         const blockers = [];
 
@@ -1979,6 +2006,16 @@ router.post('/cases/:id/decision', authenticate, requireRole(ROLES.AICTE_OFFICER
       });
     }
 
+    // Check 0: Terminal / Post-Release State Validation (Forbidden Transitions)
+    if (['REFUNDED', 'RELEASE_SANCTIONED', 'REJECTED'].includes(seedCase.status)) {
+      return res.status(422).json({
+        success: false,
+        error: `Forbidden State Transition: Case "${caseId}" is in terminal/closed status "${seedCase.status}". An already refunded, released, or rejected FDR deposit cannot be approved or modified.`,
+        current_status: seedCase.status,
+        decision
+      });
+    }
+
     if (decision === 'APPROVE') {
       const blockers = [];
       if (!seedCase.simulated) {
@@ -2106,15 +2143,17 @@ router.get('/cases/:id/audit-trail', authenticate, async (req, res) => {
         return res.status(404).json({ success: false, error: 'Case not found' });
       }
       const c = caseCheck.rows[0];
-      const matchInstId = c.institution_id && c.institution_id === userInstId;
-      const matchInstName = c.institution_name && (
-        c.institution_name.toLowerCase() === userInstName.toLowerCase()
-      );
-      if (!matchInstId && !matchInstName) {
-        return res.status(403).json({
-          success: false,
-          error: 'Access Denied: You are not authorized to view audit events for another institution.'
-        });
+      const matchInstId = c.institution_id && userInstId && c.institution_id === userInstId;
+      if (!matchInstId) {
+        const allowNameFallback = !userInstId && c.institution_name && userInstName && (
+          c.institution_name.toLowerCase() === userInstName.toLowerCase()
+        );
+        if (!allowNameFallback) {
+          return res.status(403).json({
+            success: false,
+            error: 'Access Denied: You are not authorized to view audit events for another institution.'
+          });
+        }
       }
     }
 
@@ -2145,15 +2184,17 @@ router.get('/cases/:id/audit-trail', authenticate, async (req, res) => {
     }
 
     if (isInstitution) {
-      const matchInstId = seedCase.institution_id && seedCase.institution_id === userInstId;
-      const matchInstName = seedCase.institution_name && (
-        seedCase.institution_name.toLowerCase() === userInstName.toLowerCase()
-      );
-      if (!matchInstId && !matchInstName) {
-        return res.status(403).json({
-          success: false,
-          error: 'Access Denied: You are not authorized to view audit events for another institution.'
-        });
+      const matchInstId = seedCase.institution_id && userInstId && seedCase.institution_id === userInstId;
+      if (!matchInstId) {
+        const allowNameFallback = !userInstId && seedCase.institution_name && userInstName && (
+          seedCase.institution_name.toLowerCase() === userInstName.toLowerCase()
+        );
+        if (!allowNameFallback) {
+          return res.status(403).json({
+            success: false,
+            error: 'Access Denied: You are not authorized to view audit events for another institution.'
+          });
+        }
       }
     }
 
