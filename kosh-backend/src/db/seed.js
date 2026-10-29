@@ -241,7 +241,18 @@ export function resetInMemorySeed() {
 export async function seedDatabase() {
   console.log('[KOSH-PRAMAAN] Seeding fictional demo FDR cases into PostgreSQL...');
   // Clean up any extraneous cases not belonging to the standard 4 seed cases
-  await query("DELETE FROM fdr_cases WHERE id NOT IN ('FDR-2026-001', 'FDR-2026-002', 'FDR-2026-003', 'FDR-2026-004')");
+  // Because audit_events and fdr_renewals have ON DELETE RESTRICT, delete child rows first
+  try {
+    await query("DELETE FROM audit_events WHERE case_id NOT IN ('FDR-2026-001', 'FDR-2026-002', 'FDR-2026-003', 'FDR-2026-004')");
+    await query("DELETE FROM case_documents WHERE case_id NOT IN ('FDR-2026-001', 'FDR-2026-002', 'FDR-2026-003', 'FDR-2026-004')");
+    await query("DELETE FROM clearance_tasks WHERE case_id NOT IN ('FDR-2026-001', 'FDR-2026-002', 'FDR-2026-003', 'FDR-2026-004')");
+    await query("DELETE FROM objections WHERE case_id NOT IN ('FDR-2026-001', 'FDR-2026-002', 'FDR-2026-003', 'FDR-2026-004')");
+    await query("DELETE FROM simulated_bank_records WHERE case_id NOT IN ('FDR-2026-001', 'FDR-2026-002', 'FDR-2026-003', 'FDR-2026-004')");
+    await query("DELETE FROM fdr_renewals WHERE case_id NOT IN ('FDR-2026-001', 'FDR-2026-002', 'FDR-2026-003', 'FDR-2026-004')");
+    await query("DELETE FROM fdr_cases WHERE id NOT IN ('FDR-2026-001', 'FDR-2026-002', 'FDR-2026-003', 'FDR-2026-004')");
+  } catch (err) {
+    // Non-fatal if tables are empty or being initialized
+  }
 
   for (const c of SEED_CASES) {
     // 1. Insert/Update FDR Case

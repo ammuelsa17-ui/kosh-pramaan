@@ -4,7 +4,7 @@ import { fetchCases, fetchCaseDetail, fetchMaturityAlerts } from '../api/casesAp
 import CaseDetailModal from './CaseDetailModal';
 import SubmitFdrModal from './SubmitFdrModal';
 
-export default function CaseTable() {
+export default function CaseTable({ initialFilter = 'ALL', initialCaseId = null, onClearTargetCase = null }) {
   const [cases, setCases] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -15,11 +15,17 @@ export default function CaseTable() {
 
   // Filters & Search
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('ALL');
+  const [statusFilter, setStatusFilter] = useState(initialFilter || 'ALL');
 
   // Selected case for detailed modal view
   const [selectedCase, setSelectedCase] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
+
+  useEffect(() => {
+    if (initialFilter) {
+      setStatusFilter(initialFilter);
+    }
+  }, [initialFilter]);
 
   const loadCases = async () => {
     setLoading(true);
@@ -36,7 +42,7 @@ export default function CaseTable() {
       setError(result.error);
     }
     if (alertsRes && alertsRes.ok) {
-      setMaturityAlerts(alertsRes.alerts || []);
+      setMaturityAlerts(alertsRes.alerts || alertsRes.data || []);
     }
     setLoading(false);
   };
@@ -44,6 +50,15 @@ export default function CaseTable() {
   useEffect(() => {
     loadCases();
   }, []);
+
+  useEffect(() => {
+    if (initialCaseId && cases.length > 0) {
+      handleOpenDetail(initialCaseId);
+      if (typeof onClearTargetCase === 'function') {
+        onClearTargetCase();
+      }
+    }
+  }, [initialCaseId, cases]);
 
   const handleOpenDetail = async (caseId) => {
     setDetailLoading(true);
@@ -72,7 +87,18 @@ export default function CaseTable() {
       c.fdr_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
       c.issuing_bank.toLowerCase().includes(searchTerm.toLowerCase());
 
-    const matchesStatus = statusFilter === 'ALL' || c.status === statusFilter;
+    let matchesStatus = true;
+    if (statusFilter === 'ALL') {
+      matchesStatus = true;
+    } else if (statusFilter === 'ATTENTION') {
+      matchesStatus = c.status === 'MISMATCH_FLAGGED' || c.status === 'CLEARANCE_BLOCKED' || (c.blocked_tasks && c.blocked_tasks > 0) || (c.active_objections && c.active_objections > 0);
+    } else if (statusFilter === 'PENDING_CLEARANCES') {
+      matchesStatus = Boolean(c.pending_tasks && c.pending_tasks > 0);
+    } else if (statusFilter === 'DEMO_APPROVED') {
+      matchesStatus = c.status === 'DEMO_APPROVED' || c.status === 'APPROVED';
+    } else {
+      matchesStatus = c.status === statusFilter;
+    }
 
     return matchesSearch && matchesStatus;
   });
@@ -119,15 +145,20 @@ export default function CaseTable() {
           <div className="banner-content">
             <BellRing size={18} color="#d97706" />
             <div>
-              <strong>FDR Maturity Surveillance: {maturityAlerts.length} Deposit(s) Expiring Within 90 Days</strong>
-              <div className="banner-subtext" style={{ color: '#b45309' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <strong>FDR Maturity Surveillance: {maturityAlerts.length} Deposit(s) Within 90-Day Window</strong>
+                <span style={{ fontSize: '0.72rem', background: '#fef3c7', border: '1px solid #fde68a', padding: '0.1rem 0.45rem', borderRadius: '4px', fontWeight: 600 }}>
+                  Implemented: In-App Surveillance &amp; Alerts API &bull; Planned: 5-Stage Automated External Dispatcher (SMS/Email)
+                </span>
+              </div>
+              <div className="banner-subtext" style={{ color: '#b45309', marginTop: '0.2rem' }}>
                 {maturityAlerts.filter(a => a.alert_level === 'CRITICAL' || a.alert_level === 'EXPIRED').length > 0
                   ? `Critical Attention: ${maturityAlerts.filter(a => a.alert_level === 'CRITICAL' || a.alert_level === 'EXPIRED').length} deposit(s) expired or expiring within 15 days require renewal.`
-                  : 'All identified deposits are tracked in the multi-stage surveillance window.'}
+                  : 'All tracked deposits are actively monitored in the AICTE APH §6.46 maturity surveillance lifecycle.'}
               </div>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
             {maturityAlerts.map(a => (
               <span
                 key={a.id}
@@ -138,12 +169,13 @@ export default function CaseTable() {
                   fontWeight: 600,
                   padding: '0.2rem 0.5rem',
                   borderRadius: '4px',
-                  cursor: 'pointer'
+                  cursor: 'pointer',
+                  border: '1px solid rgba(0,0,0,0.06)'
                 }}
                 onClick={() => handleOpenDetail(a.id)}
                 title={`Click to view case ${a.id} (Maturing in ${a.days_to_maturity} days)`}
               >
-                {a.fdr_number} ({a.days_to_maturity < 0 ? 'EXPIRED' : `${a.days_to_maturity}d`})
+                {a.fdr_number || a.id} ({a.days_to_maturity < 0 ? 'EXPIRED' : `${a.days_to_maturity}d`})
               </span>
             ))}
           </div>
@@ -156,6 +188,7 @@ export default function CaseTable() {
           className="kpi-card"
           onClick={() => setStatusFilter('ALL')}
           title="Click to view all cases"
+          style={{ cursor: 'pointer' }}
         >
           <div className="kpi-icon blue">
             <FileText size={20} />
@@ -169,11 +202,9 @@ export default function CaseTable() {
 
         <div
           className="kpi-card"
-          onClick={() => {
-            // Filter to mismatch or blocked cases
-            setStatusFilter(amountMismatches > 0 ? 'MISMATCH_FLAGGED' : 'CLEARANCE_BLOCKED');
-          }}
+          onClick={() => setStatusFilter('ATTENTION')}
           title="Click to view cases requiring officer attention"
+          style={{ cursor: 'pointer' }}
         >
           <div className="kpi-icon red">
             <ShieldAlert size={20} />
@@ -187,8 +218,9 @@ export default function CaseTable() {
 
         <div
           className="kpi-card"
-          onClick={() => setStatusFilter('CLEARANCE_BLOCKED')}
-          title="Click to view clearance blocked cases"
+          onClick={() => setStatusFilter('PENDING_CLEARANCES')}
+          title="Click to view cases with pending clearances"
+          style={{ cursor: 'pointer' }}
         >
           <div className="kpi-icon amber">
             <Clock size={20} />
@@ -203,7 +235,8 @@ export default function CaseTable() {
         <div
           className="kpi-card"
           onClick={() => setStatusFilter('MISMATCH_FLAGGED')}
-          title="Click to view amount mismatches"
+          title="Click to view amount/data mismatches"
+          style={{ cursor: 'pointer' }}
         >
           <div className="kpi-icon amber">
             <AlertTriangle size={20} />
@@ -237,11 +270,14 @@ export default function CaseTable() {
           <Filter size={16} />
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
             <option value="ALL">All Statuses ({cases.length})</option>
+            <option value="ATTENTION">Requiring Attention ({casesRequiringAttention})</option>
+            <option value="PENDING_CLEARANCES">Pending Clearances ({cases.filter(c => c.pending_tasks > 0).length})</option>
             <option value="UNDER_REVIEW">Under Review</option>
             <option value="MISMATCH_FLAGGED">Mismatch Flagged</option>
             <option value="CLEARANCE_BLOCKED">Clearance Blocked</option>
-            <option value="SUBMITTED">Submitted</option>
-            <option value="APPROVED">Approved</option>
+            <option value="SUBMITTED">Submitted / Intake</option>
+            <option value="DEMO_APPROVED">Demo Approved / Approved</option>
+            <option value="REJECTED">Rejected</option>
           </select>
 
           <button className="refresh-table-btn" onClick={loadCases} disabled={loading} title="Refresh case list">

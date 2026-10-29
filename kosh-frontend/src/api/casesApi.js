@@ -407,3 +407,22 @@ export async function renewFdrCase(caseId, renewalData) {
     return { ok: false, error: err.message || 'Renewal request failed' };
   }
 }
+
+/**
+ * Fetch recent cross-case administrative audit events for dashboard activity feeds.
+ */
+export async function fetchRecentAuditActivity(limit = 8) {
+  try {
+    const res = await fetch(`${BACKEND_BASE_URL}/api/cases/audit/recent?limit=${limit}`, {
+      method: 'GET',
+      headers: getHeaders()
+    });
+    const payload = await res.json();
+    if (!res.ok) {
+      return { ok: false, error: payload.error || `HTTP ${res.status}`, data: [] };
+    }
+    return { ok: true, count: payload.count || 0, data: payload.data || [] };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Failed to fetch recent audit activity', data: [] };
+  }
+}

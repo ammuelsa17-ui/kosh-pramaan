@@ -96,6 +96,41 @@ test.describe('FDR Verification Logic, Security & Complete Lifecycle Audit', () 
     department: 'Approvals & Sanctions'
   });
 
+  test.before(async () => {
+    try {
+      await pool.query(`
+        INSERT INTO fdr_cases (id, institution_id, institution_name, depositor_name, fdr_number, issuing_bank, branch_name, ifsc_code, submitted_amount, lien_marked_to, deposit_date, maturity_date, status, department_queue)
+        VALUES 
+          ('FDR-TEST-IFSC', 'AICTE-1-492019482', 'Apex Infrastructure', 'Apex', 'FDR/TEST/MISMATCH_IFSC', 'SBI', 'Main', 'SBIN0001234', 1000000, 'Govt', '2026-01-01', '2027-01-01', 'UNDER_REVIEW', 'ACCOUNTS_QUEUE'),
+          ('FDR-TEST-MAT', 'AICTE-1-492019482', 'Apex Infrastructure', 'Apex', 'FDR/TEST/MISMATCH_MATURITY', 'SBI', 'Main', 'SBIN0001234', 1000000, 'Govt', '2026-01-01', '2027-01-01', 'UNDER_REVIEW', 'ACCOUNTS_QUEUE'),
+          ('FDR-TEST-LIEN', 'AICTE-1-492019482', 'Apex Infrastructure', 'Apex', 'FDR/TEST/MISMATCH_LIEN', 'SBI', 'Main', 'SBIN0001234', 1000000, 'Govt', '2026-01-01', '2027-01-01', 'UNDER_REVIEW', 'ACCOUNTS_QUEUE'),
+          ('FDR-DEMO-SIM-001', 'AICTE-1-492019482', 'Apex Infrastructure', 'Apex', 'FDR/TEST/CLEAN', 'SBI', 'Main', 'SBIN0001234', 5000000, 'Govt', '2026-01-01', '2027-01-01', 'UNDER_REVIEW', 'ACCOUNTS_QUEUE')
+        ON CONFLICT (id) DO NOTHING
+      `);
+      await pool.query(`
+        INSERT INTO simulated_bank_records (case_id, fdr_number, simulated_bank_name, simulated_branch_ifsc, simulated_amount, simulated_lien_status, simulated_maturity_date, amount_matched, ifsc_matched, maturity_matched, lien_matched, simulation_disclaimer)
+        VALUES ('FDR-DEMO-SIM-001', 'FDR/TEST/CLEAN', 'SBI', 'SBIN0001234', 5000000, 'LIEN_CONFIRMED_TO_GOVERNMENT', '2027-01-01', true, true, true, true, 'SIMULATED — NOT LIVE BANK VERIFICATION')
+        ON CONFLICT (case_id) DO NOTHING
+      `);
+      await pool.query(`
+        INSERT INTO case_documents (id, case_id, document_type, document_name, version, mime_type, file_size_bytes, sha256_hash, document_data, uploaded_by, uploaded_by_role)
+        VALUES ('DOC-CLEAN-01', 'FDR-DEMO-SIM-001', 'FDR_CERTIFICATE', 'clean_cert.pdf', 1, 'application/pdf', 1024, 'hash', 'mockdata', 'Tester', 'AICTE_OFFICER')
+        ON CONFLICT (id) DO NOTHING
+      `);
+    } catch {
+      // In decoupled environment
+    }
+  });
+
+  test.after(async () => {
+    try {
+      await pool.query("DELETE FROM case_documents WHERE case_id IN ('FDR-TEST-IFSC', 'FDR-TEST-MAT', 'FDR-TEST-LIEN', 'FDR-DEMO-SIM-001')");
+      await pool.query("DELETE FROM simulated_bank_records WHERE case_id IN ('FDR-TEST-IFSC', 'FDR-TEST-MAT', 'FDR-TEST-LIEN', 'FDR-DEMO-SIM-001')");
+      await pool.query("DELETE FROM audit_events WHERE case_id IN ('FDR-TEST-IFSC', 'FDR-TEST-MAT', 'FDR-TEST-LIEN', 'FDR-DEMO-SIM-001')");
+      await pool.query("DELETE FROM fdr_cases WHERE id IN ('FDR-TEST-IFSC', 'FDR-TEST-MAT', 'FDR-TEST-LIEN', 'FDR-DEMO-SIM-001')");
+    } catch {}
+  });
+
   test('1. Authentication Guard: Unauthenticated requests return HTTP 401', async () => {
     const res = await makeRequest({ method: 'GET', url: '/api/cases' });
     assert.equal(res.statusCode, 401);
@@ -243,74 +278,34 @@ test.describe('FDR Verification Logic, Security & Complete Lifecycle Audit', () 
   });
 
   test('8. Separate Demo Verification: Approvals produce DEMO_APPROVED, official release disabled', async () => {
-    // When eligible case is approved via simulated demonstration workflow:
-    const originalQuery = pool.query.bind(pool);
-    pool.query = async (sql, params) => {
-      if (typeof sql === 'string' && sql.includes('FROM fdr_cases WHERE id = $1')) {
-        return {
-          rows: [{
-            id: 'FDR-DEMO-CLEAN',
-            fdr_number: 'FDR/CLEAN/2026/001',
-            submitted_amount: '5000000.00',
-            status: 'UNDER_REVIEW',
-            document_filename: 'FDR_Cert.pdf'
-          }]
-        };
-      }
-      if (typeof sql === 'string' && sql.includes('FROM simulated_bank_records')) {
-        return {
-          rows: [{
-            amount_matched: true,
-            ifsc_matched: true,
-            maturity_matched: true,
-            lien_matched: true,
-            simulated_amount: '5000000.00'
-          }]
-        };
-      }
-      if (typeof sql === 'string' && sql.includes('FROM clearance_tasks')) {
-        return { rows: [] }; // No incomplete tasks
-      }
-      if (typeof sql === 'string' && sql.includes('FROM objections')) {
-        return { rows: [] }; // No active objections
-      }
-      if (typeof sql === 'string' && sql.includes('FROM case_documents')) {
-        return { rows: [{ count: 1 }] };
-      }
-      return { rows: [] };
-    };
+    // Attempting official release directly must be rejected
+    const officialReleaseAttempt = await makeRequest({
+      method: 'POST',
+      url: '/api/cases/FDR-DEMO-SIM-001/decision',
+      headers: { 'authorization': `Bearer ${aicteDirectorToken}` },
+      body: { decision: 'APPROVE', official_release: true, rationale: 'Attempting live release' }
+    });
+    assert.equal(officialReleaseAttempt.statusCode, 422);
+    assert.match(officialReleaseAttempt.body.error, /official financial release disabled/i);
 
-    try {
-      const approveRes = await makeRequest({
-        method: 'POST',
-        url: '/api/cases/FDR-DEMO-CLEAN/decision',
-        headers: { 'authorization': `Bearer ${aicteDirectorToken}` },
-        body: { decision: 'APPROVE', rationale: 'Demo approval verification' }
-      });
+    const approveRes = await makeRequest({
+      method: 'POST',
+      url: '/api/cases/FDR-DEMO-SIM-001/decision',
+      headers: { 'authorization': `Bearer ${aicteDirectorToken}` },
+      body: { decision: 'APPROVE', rationale: 'Demo approval verification' }
+    });
 
-      assert.equal(approveRes.statusCode, 200);
-      assert.equal(approveRes.body.new_status, 'DEMO_APPROVED');
-      assert.equal(approveRes.body.is_demo_approved, true);
-      assert.equal(approveRes.body.official_release_enabled, false);
-
-      // Attempting official release directly must be rejected
-      const officialReleaseAttempt = await makeRequest({
-        method: 'POST',
-        url: '/api/cases/FDR-DEMO-CLEAN/decision',
-        headers: { 'authorization': `Bearer ${aicteDirectorToken}` },
-        body: { decision: 'APPROVE', official_release: true, rationale: 'Attempting live release' }
-      });
-      assert.equal(officialReleaseAttempt.statusCode, 422);
-      assert.match(officialReleaseAttempt.body.error, /official financial release disabled/i);
-    } finally {
-      pool.query = originalQuery;
-    }
+    assert.equal(approveRes.statusCode, 200);
+    assert.equal(approveRes.body.new_status, 'DEMO_APPROVED');
+    assert.equal(approveRes.body.is_demo_approved, true);
+    assert.equal(approveRes.body.official_release_enabled, false);
   });
 
   test('9. Database Fail-Safe: Production write mutations fail safely with HTTP 503', async () => {
     const originalEnv = process.env.NODE_ENV;
     const originalSecret = process.env.JWT_SECRET;
     const originalQuery = pool.query.bind(pool);
+    const originalConnect = pool.connect.bind(pool);
 
     try {
       process.env.NODE_ENV = 'production';
@@ -323,6 +318,9 @@ test.describe('FDR Verification Logic, Security & Complete Lifecycle Audit', () 
       });
 
       // Simulate database connection failure
+      pool.connect = async () => {
+        throw new Error('Connection terminated unexpectedly');
+      };
       pool.query = async () => {
         throw new Error('Connection terminated unexpectedly');
       };
@@ -342,6 +340,7 @@ test.describe('FDR Verification Logic, Security & Complete Lifecycle Audit', () 
       process.env.NODE_ENV = originalEnv;
       process.env.JWT_SECRET = originalSecret;
       pool.query = originalQuery;
+      pool.connect = originalConnect;
     }
   });
 
@@ -398,5 +397,16 @@ test.describe('FDR Verification Logic, Security & Complete Lifecycle Audit', () 
     });
     assert.equal(listRes.statusCode, 200);
     assert.ok(Array.isArray(listRes.body.data));
+  });
+
+  test('13. Dashboard Support: Recent Administrative Audit Feed Endpoint', async () => {
+    const res = await makeRequest({
+      method: 'GET',
+      url: '/api/cases/audit/recent?limit=5',
+      headers: { 'authorization': `Bearer ${aicteDirectorToken}` }
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.success, true);
+    assert.ok(Array.isArray(res.body.data));
   });
 });

@@ -3,9 +3,18 @@ import Header from './components/Header';
 import Navigation from './components/Navigation';
 import HealthStatusBadge from './components/HealthStatusBadge';
 import DashboardPlaceholder from './components/DashboardPlaceholder';
+import CaseTable from './components/CaseTable';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('dashboard'); // Start on Executive Dashboard overview
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [caseFilter, setCaseFilter] = useState('ALL');
+  const [targetCaseId, setTargetCaseId] = useState(null);
+
+  const handleNavigateToCases = (filter = 'ALL', caseId = null) => {
+    setCaseFilter(filter);
+    setTargetCaseId(caseId);
+    setActiveTab('cases');
+  };
 
   return (
     <div className="app-container">
@@ -14,7 +23,19 @@ export default function App() {
       
       <main className="main-content">
         <HealthStatusBadge />
-        <DashboardPlaceholder activeTab={activeTab} setActiveTab={setActiveTab} />
+        {activeTab === 'cases' ? (
+          <CaseTable
+            initialFilter={caseFilter}
+            initialCaseId={targetCaseId}
+            onClearTargetCase={() => setTargetCaseId(null)}
+          />
+        ) : (
+          <DashboardPlaceholder
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            onNavigateToCases={handleNavigateToCases}
+          />
+        )}
       </main>
 
       <footer className="gov-footer">

@@ -329,8 +329,8 @@ router.post('/cases', authenticate, requireRole(ROLES.INSTITUTION, ROLES.AICTE_O
         [
           newCaseId,
           'FDR_APPLICATION_SUBMITTED',
-          req.user.name,
-          req.user.role,
+          req.user?.name || req.user?.id || 'Institution Submitter',
+          req.user?.role || 'INSTITUTION',
           'Institutional security deposit application received and assigned to INTAKE_QUEUE per AICTE APH §6.46.',
           JSON.stringify({
             fdr_number: trimmedFdr,
@@ -593,6 +593,84 @@ router.get('/cases/alerts/maturity', authenticate, async (req, res) => {
 });
 
 /**
+ * 2B. GET /api/cases/audit/recent
+ * Returns recent cross-case administrative audit activity for dashboard executive feeds.
+ * Record-Level Authorization:
+ * - INSTITUTION users only see audit events for their own institution.
+ * - Officers and Auditors see recent system-wide actions.
+ */
+router.get('/cases/audit/recent', authenticate, async (req, res) => {
+  const isInstitution = req.user.role === ROLES.INSTITUTION;
+  const userInstId = req.user.institution_id || '';
+  const userInstName = req.user.name || '';
+  const limit = Math.min(parseInt(req.query.limit, 10) || 10, 50);
+
+  try {
+    let sql = `
+      SELECT 
+        a.id, a.case_id, c.institution_name, c.fdr_number,
+        a.action, a.actor, a.actor_role, a.rationale,
+        a.previous_state, a.new_state, a.event_timestamp
+      FROM audit_events a
+      JOIN fdr_cases c ON c.id = a.case_id
+    `;
+    const params = [];
+
+    if (isInstitution) {
+      sql += ` WHERE (c.institution_id = $1 OR LOWER(c.institution_name) = LOWER($2))`;
+      params.push(userInstId, userInstName);
+      sql += ` ORDER BY a.event_timestamp DESC, a.id DESC LIMIT $3`;
+      params.push(limit);
+    } else {
+      sql += ` ORDER BY a.event_timestamp DESC, a.id DESC LIMIT $1`;
+      params.push(limit);
+    }
+
+    const result = await query(sql, params);
+
+    return res.status(200).json({
+      success: true,
+      source: 'POSTGRESQL',
+      count: result.rows.length,
+      data: result.rows
+    });
+  } catch (err) {
+    if (shouldEnforceDatabase()) {
+      return sendSafeDatabaseError(res, err, 'GET /cases/audit/recent');
+    }
+
+    // In-memory demo fallback
+    const allEvents = [];
+    SEED_CASES.forEach(c => {
+      if (isInstitution) {
+        const matchId = c.institution_id && c.institution_id === userInstId;
+        const matchName = c.institution_name && userInstName && c.institution_name.toLowerCase() === userInstName.toLowerCase();
+        if (!matchId && !matchName) return;
+      }
+      if (Array.isArray(c.audit_events)) {
+        c.audit_events.forEach(evt => {
+          allEvents.push({
+            ...evt,
+            case_id: c.id,
+            institution_name: c.institution_name,
+            fdr_number: c.fdr_number
+          });
+        });
+      }
+    });
+
+    allEvents.sort((a, b) => new Date(b.event_timestamp) - new Date(a.event_timestamp));
+
+    return res.status(200).json({
+      success: true,
+      source: 'SEEDED_FALLBACK',
+      count: allEvents.slice(0, limit).length,
+      data: allEvents.slice(0, limit)
+    });
+  }
+});
+
+/**
  * 3. GET /api/cases/:id
  * Returns single FDR case detail including submitted vs simulated bank data,
  * clearance tasks, objections, and registered documents.
@@ -633,7 +711,7 @@ router.get('/cases/:id', authenticate, async (req, res) => {
       query(`SELECT * FROM clearance_tasks WHERE case_id = $1 ORDER BY created_at ASC`, [caseId]),
       query(`SELECT * FROM objections WHERE case_id = $1 ORDER BY created_at ASC`, [caseId]),
       query(`SELECT id, document_type, document_name, version, mime_type, file_size_bytes, sha256_hash, uploaded_by, uploaded_by_role, uploaded_at FROM case_documents WHERE case_id = $1 ORDER BY uploaded_at ASC`, [caseId]),
-      query(`SELECT id, case_id, previous_fdr_number, new_fdr_number, previous_maturity_date, new_maturity_date, renewal_amount, actor, remarks, created_at FROM fdr_renewals WHERE case_id = $1 ORDER BY created_at ASC`, [caseId])
+      query(`SELECT id, case_id, previous_fdr_number, new_fdr_number, previous_maturity_date, new_maturity_date, previous_amount, new_amount, renewal_notes, renewed_by, renewed_by_role, created_at FROM fdr_renewals WHERE case_id = $1 ORDER BY created_at ASC`, [caseId])
     ]);
 
     return res.status(200).json({
@@ -859,8 +937,8 @@ router.post('/cases/:id/documents', authenticate, requireRole(ROLES.INSTITUTION,
         [
           caseId,
           'DOCUMENT_EVIDENCE_UPLOADED',
-          req.user.name,
-          req.user.role,
+          req.user?.name || req.user?.id || 'Document Submitter',
+          req.user?.role || 'INSTITUTION',
           `Evidentiary artifact "${document_name}" (v${nextVersion}) uploaded with SHA-256 integrity verification.`,
           JSON.stringify({
             document_id: docId,
@@ -1091,8 +1169,8 @@ router.post('/cases/:id/simulate-verify', authenticate, requireRole(ROLES.VERIFI
         [
           caseId,
           'SIMULATED_VERIFICATION_EXECUTED',
-          req.user.name,
-          req.user.role,
+          req.user?.name || req.user?.id || 'Verification Officer',
+          req.user?.role || 'VERIFICATION_OFFICER',
           allMatched
             ? 'Core-banking ledger comparison confirmed matching parameters across amount, IFSC, maturity date, and lien.'
             : 'Core-banking ledger comparison detected discrepancies requiring nodal review.',
@@ -1293,7 +1371,7 @@ router.put('/cases/:id/tasks/:taskId', authenticate, requireRole(ROLES.CLEARANCE
         });
       }
 
-      const completedBy = status === 'COMPLETED' ? req.user.name : null;
+      const completedBy = status === 'COMPLETED' ? (req.user?.name || req.user?.id || 'Clearance Officer') : null;
       const completedAt = status === 'COMPLETED' ? new Date() : null;
 
       await client.query(
@@ -1313,8 +1391,8 @@ router.put('/cases/:id/tasks/:taskId', authenticate, requireRole(ROLES.CLEARANCE
         [
           caseId,
           'CLEARANCE_TASK_UPDATED',
-          req.user.name,
-          req.user.role,
+          req.user?.name || req.user?.id || 'Clearance Officer',
+          req.user?.role || 'CLEARANCE_OFFICER',
           remarks || blocker_reason || `Task status updated to ${status}`,
           prevTask.status,
           status,
@@ -1482,8 +1560,8 @@ router.put('/cases/:id/objections/:objId', authenticate, requireRole(ROLES.CLEAR
         [
           caseId,
           `OBJECTION_${status}`,
-          req.user.name,
-          req.user.role,
+          req.user?.name || req.user?.id || 'Clearance Officer',
+          req.user?.role || 'CLEARANCE_OFFICER',
           resolution_remarks,
           prevObj.status,
           status,
@@ -1755,8 +1833,8 @@ router.post('/cases/:id/decision', authenticate, requireRole(ROLES.AICTE_OFFICER
         [
           caseId,
           `DECISION_${decision}`,
-          req.user.name,
-          req.user.role,
+          req.user?.name || req.user?.id || 'AICTE Officer',
+          req.user?.role || 'AICTE_OFFICER',
           rationale,
           c.status,
           newStatus,
@@ -2111,7 +2189,7 @@ router.post('/cases/:id/renew', authenticate, requireRole(ROLES.INSTITUTION, ROL
           c.maturity_date, new_maturity_date,
           c.submitted_amount, amtNum.toFixed(2),
           renewal_notes ? String(renewal_notes).trim() : 'FDR deposit renewal recorded',
-          req.user.name, req.user.role
+          req.user?.name || req.user?.id || 'Authorized Officer', req.user.role
         ]
       );
 
@@ -2129,8 +2207,8 @@ router.post('/cases/:id/renew', authenticate, requireRole(ROLES.INSTITUTION, ROL
         [
           caseId,
           'FDR_RENEWAL_RECORDED',
-          req.user.name,
-          req.user.role,
+          req.user?.name || req.user?.id || 'Renewal Officer',
+          req.user?.role || 'AICTE_OFFICER',
           renewal_notes || `FDR renewed from ${c.fdr_number} to ${trimmedNewFdr}.`,
           c.status,
           'UNDER_REVIEW',
@@ -2265,8 +2343,8 @@ router.post('/cases/:id/release-request', authenticate, requireRole(ROLES.INSTIT
         [
           caseId,
           'RELEASE_REQUESTED',
-          req.user.name,
-          req.user.role,
+          req.user?.name || req.user?.id || 'Institution Submitter',
+          req.user?.role || 'INSTITUTION',
           release_reason || 'Institutional request for FDR release submitted.',
           c.status,
           'RELEASE_REQUESTED',
@@ -2331,8 +2409,8 @@ router.post('/cases/:id/refund', authenticate, requireRole(ROLES.AICTE_OFFICER),
         [
           caseId,
           'FDR_REFUND_PROCESSED',
-          req.user.name,
-          req.user.role,
+          req.user?.name || req.user?.id || 'AICTE Officer',
+          req.user?.role || 'AICTE_OFFICER',
           rationale || 'FDR deposit refunded and closed in AICTE records.',
           c.status,
           'REFUNDED',
